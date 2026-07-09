@@ -1,0 +1,3 @@
+spring:
+  application:
+    name: nbc-coffee-order-system
