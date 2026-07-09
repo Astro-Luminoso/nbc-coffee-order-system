@@ -1,10 +1,10 @@
 # AGENTS.md
 
-> A root Router for agents task instructions. This file will only explain details about 'Compulsory Pre-Workflow' and
+> A root Router for agents task instructions. This file will only explain details about 'Common Prerequisites' and
 > 'Common Mistake Prevention'.
 
 
-## Compulsory Prerequisites
+## Common Prerequisites
 Before you start any tasks, you must read or follow these prerequisites introduced below.
 
 - About local dev infrastructure and how to run the project locally, read [docs/local-dev.md](docs/local-dev.md).
