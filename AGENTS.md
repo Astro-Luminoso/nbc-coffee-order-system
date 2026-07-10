@@ -9,7 +9,7 @@
 - Review and Test must be passed before finishing any task.
   - Only Review may be ignored if the user wish to open a PR forcefully, but should leave a comments about the pr is created without review is accepted.
 
-## Original Source Router
+## Origin Source Router
 
 | About                                                | Source          |
 |------------------------------------------------------|-----------------|
