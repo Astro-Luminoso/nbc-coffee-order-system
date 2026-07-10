@@ -1,6 +1,6 @@
 # AGENTS.md
 
-> A root Router for agents task instructions. This file will only explain details about 'Common Prerequisites' and
+> A root Router for agents task instructions. This file will only explain details about 'Common Prerequisites'
 > 'Origin Source Router' and 'Common Mistake Prevention'.
 
 
