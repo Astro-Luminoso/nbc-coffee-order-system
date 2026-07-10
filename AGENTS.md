@@ -19,5 +19,5 @@
 
 
 ## Common Mistake Prevention
-- All logs and outputs must be printed to console, should be readable and written in Korean.
+- You must write any .md documentation in English, but all logs and outputs to console must be written in Korean.
 
