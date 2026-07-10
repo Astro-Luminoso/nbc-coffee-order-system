@@ -5,11 +5,19 @@
 
 
 ## Common Prerequisites
-Before you start any tasks, you must read or follow these prerequisites introduced below.
-
 - About local dev infrastructure and how to run the project locally, read [docs/local-dev.md](docs/local-dev.md).
 - Review and Test must be passed before finishing any task.
   - Only Review may be ignored if the user wish to open a PR forcefully, but should leave a comments about the pr is created without review is accepted.
 
+## Original Source Router
 
+| About                                                | Source          |
+|------------------------------------------------------|-----------------|
+| Any Tech Stack or Dependency                         | `build.gradle`  |
+| Product Goal, Business Rules, Acceptance Criterias   | `./docs/PRD.md` |
+| Entities, Entities' tuples, Contraints and Relations | `./docs/ERD.md` |
+
+
+## Common Mistake Prevention
+- All logs and outputs must be printed to console, should be readable and written in Korean.
 
