@@ -83,8 +83,7 @@ The application must not depend on in-memory state for correctness. Shared MySQL
 
 | Model             | Key Attributes                                                                        | Responsibilities and Constraints                                                                                            |
 |-------------------|---------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------|
-| User              | `id`                                                                                  | Identifies the customer who owns points and places orders.                                                                  |
-| Point Account     | `userId`, `balance`                                                                   | Stores the current point balance. The balance must never be negative, and concurrent updates must be controlled.            |
+| User              | `id`, `balance`                                                                       | Identifies the customer, stores the current point balance, and places orders. The balance must never be negative, and concurrent updates must be controlled. |
 | Point Transaction | `id`, `userId`, `type`, `amount`, `orderId`, `createdAt`                              | Records every charge and payment adjustment as an auditable history. The amount must be positive.                           |
 | Menu              | `id`, `name`, `price`                                                                 | Represents a coffee available for ordering. The price must be positive.                                                     |
 | Order             | `id`, `userId`, `menuId`, `paymentAmount`, `status`, `orderedAt`                      | Captures the purchased menu and price at the time of payment. Only successfully paid orders contribute to popularity.       |
@@ -115,7 +114,7 @@ TTL applies to each daily ZSET key, not to individual ZSET members. Each bucket 
 
 ### Relationships
 
-- A user owns one point account.
+- A user stores one current point balance.
 - A user has many point transactions and orders.
 - A menu can be referenced by many orders.
 - A paid order has one payment point transaction and one order event.
