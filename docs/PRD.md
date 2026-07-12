@@ -2,12 +2,12 @@
 
 ## 1. Project Goal (Assignment)
 
-The goal of this assignment is to build a reliable backend for a coffee ordering service. 
-A user must be able to browse coffee menus, charge points, order and pay for a coffee with those points, 
+The goal of this assignment is to build a reliable backend for a coffee ordering service.
+A user must be able to browse coffee menus, charge points, order and pay for a coffee with those points,
 and view the three most popular menus from the last seven days.
 
-The solution must demonstrate more than basic API behavior. 
-It must remain correct when multiple application instances are running, protect point balances and order counts from concurrency issues, 
+The solution must demonstrate more than basic API behavior.
+It must remain correct when multiple application instances are running, protect point balances and order counts from concurrency issues,
 preserve data consistency, and include tests for every feature and constraint.
 
 ### Success Criteria
