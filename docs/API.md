@@ -3,18 +3,9 @@
 ## 1. Overview
 
 This document defines the HTTP API contract for the coffee order system described in [`PRD.md`](PRD.md).
-All endpoints use the `/api/v1` base path and exchange JSON unless otherwise noted.
+Shared HTTP, response DTO, exception handling, and logging rules are defined in [`CONVENTION.md`](CONVENTION.md).
 
-### Conventions
-
-- Request and response bodies use `application/json`.
-- Error responses use `application/problem+json`.
-- Field names use `camelCase`.
-- Identifiers are positive 64-bit integers.
-- Prices, charges, balances, and payment amounts are non-negative integer points. One Korean won equals one point.
-- Date-time values use ISO 8601 with a UTC offset, such as `2026-07-13T14:30:00+09:00`.
-- Unknown JSON fields are ignored for forward compatibility.
-- Authentication and authorization are outside the current API scope.
+All response bodies use the common `CommonApiResponse<T>` envelope.
 
 ## 2. Endpoint Summary
 
@@ -45,18 +36,21 @@ Content-Type: application/json
 
 ```json
 {
-  "menus": [
-    {
-      "id": 1,
-      "name": "Americano",
-      "price": 4500
-    },
-    {
-      "id": 2,
-      "name": "Cafe Latte",
-      "price": 5000
-    }
-  ]
+  "httpStatus": 200,
+  "data": {
+    "menus": [
+      {
+        "id": 1,
+        "name": "Americano",
+        "price": 4500
+      },
+      {
+        "id": 2,
+        "name": "Cafe Latte",
+        "price": 5000
+      }
+    ]
+  }
 }
 ```
 
@@ -95,9 +89,12 @@ Content-Type: application/json
 
 ```json
 {
-  "userId": 1,
-  "chargedAmount": 10000,
-  "balance": 15000
+  "httpStatus": 200,
+  "data": {
+    "userId": 1,
+    "chargedAmount": 10000,
+    "balance": 15000
+  }
 }
 ```
 
@@ -144,16 +141,19 @@ Content-Type: application/json
 
 ```json
 {
-  "orderId": 1001,
-  "userId": 1,
-  "menu": {
-    "id": 2,
-    "name": "Cafe Latte"
-  },
-  "quantity": 1,
-  "paymentAmount": 5000,
-  "remainingBalance": 10000,
-  "orderedAt": "2026-07-13T14:30:00+09:00"
+  "httpStatus": 201,
+  "data": {
+    "orderId": 1001,
+    "userId": 1,
+    "menu": {
+      "id": 2,
+      "name": "Cafe Latte"
+    },
+    "quantity": 1,
+    "paymentAmount": 5000,
+    "remainingBalance": 10000,
+    "orderedAt": "2026-07-13T14:30:00+09:00"
+  }
 }
 ```
 
@@ -205,81 +205,34 @@ Content-Type: application/json
 
 ```json
 {
-  "period": {
-    "startDate": "2026-07-07",
-    "endDate": "2026-07-13"
-  },
-  "menus": [
-    {
-      "menuId": 2,
-      "name": "Cafe Latte",
-      "price": 5000,
-      "orderCount": 42
+  "httpStatus": 200,
+  "data": {
+    "period": {
+      "startDate": "2026-07-07",
+      "endDate": "2026-07-13"
     },
-    {
-      "menuId": 1,
-      "name": "Americano",
-      "price": 4500,
-      "orderCount": 38
-    }
-  ]
+    "menus": [
+      {
+        "menuId": 2,
+        "name": "Cafe Latte",
+        "price": 5000,
+        "orderCount": 42
+      },
+      {
+        "menuId": 1,
+        "name": "Americano",
+        "price": 4500,
+        "orderCount": 38
+      }
+    ]
+  }
 }
 ```
 
 The period is inclusive at both ends. Only paid orders whose payment completion date falls within the returned period are counted.
 If no paid orders exist in the period, the endpoint returns `200 OK` with an empty `menus` array.
 
-## 7. Error Format
-
-All application errors follow the Problem Details format. The stable `code` field is intended for programmatic handling, while `detail` is human-readable and may change.
-
-```http
-HTTP/1.1 409 Conflict
-Content-Type: application/problem+json
-```
-
-```json
-{
-  "type": "about:blank",
-  "title": "Conflict",
-  "status": 409,
-  "detail": "The user does not have enough points to purchase this menu.",
-  "instance": "/api/v1/orders",
-  "code": "INSUFFICIENT_POINTS"
-}
-```
-
-Validation errors additionally include an `errors` array:
-
-```json
-{
-  "type": "about:blank",
-  "title": "Bad Request",
-  "status": 400,
-  "detail": "One or more request fields are invalid.",
-  "instance": "/api/v1/orders",
-  "code": "INVALID_REQUEST",
-  "errors": [
-    {
-      "field": "menuId",
-      "reason": "must be a positive integer"
-    }
-  ]
-}
-```
-
-### Common Errors
-
-| Status | Code | Meaning |
-|--------|------|---------|
-| `400 Bad Request` | `INVALID_REQUEST` | The path, JSON syntax, or request fields are invalid |
-| `404 Not Found` | `USER_NOT_FOUND` | The requested user does not exist |
-| `404 Not Found` | `MENU_NOT_FOUND` | The requested menu does not exist |
-| `409 Conflict` | `INSUFFICIENT_POINTS` | The user cannot pay the current menu price |
-| `500 Internal Server Error` | `INTERNAL_SERVER_ERROR` | An unexpected server error occurred |
-| `503 Service Unavailable` | `SERVICE_UNAVAILABLE` | A required dependency is temporarily unavailable |
-
-## 8. Consistency Guarantees
+## 7. Consistency Guarantees
 
 - A successful point charge is reflected exactly once in the returned balance for that request.
 - A successful order response means the point deduction, order, and order item have committed together.
