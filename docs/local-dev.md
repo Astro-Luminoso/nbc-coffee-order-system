@@ -50,4 +50,4 @@ Run the application with the local profile enabled:
 ./gradlew bootRun --args='--spring.profiles.active=local'
 ```
 
-The H2 database is in memory and is reset whenever the application stops. The H2 console endpoint is configured at `http://localhost:8080/h2-console`; access depends on the application's security configuration. Use `jdbc:h2:mem:coffee-order;MODE=MySQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE` as the JDBC URL.
+The H2 database is in memory and is reset whenever the application stops. The H2 console is available at `http://localhost:8080/h2-console` while the application is running. Use `jdbc:h2:mem:coffee-order;MODE=MySQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE` as the JDBC URL.
