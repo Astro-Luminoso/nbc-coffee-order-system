@@ -5,7 +5,7 @@
 - All public API endpoints use the `/api/v1` base path.
 - Request and response bodies use `application/json`.
 - Field names use `camelCase`.
-- Identifiers are positive 64-bit integers.
+- Domain identifiers are positive 64-bit integers. The server-generated `orderAttemptId` is the documented string exception.
 - Prices, charges, balances, and payment amounts are integer points. One Korean won equals one point.
 - Date-time values use ISO 8601 with a UTC offset, such as `2026-07-13T14:30:00+09:00`.
 - The business timezone is `Asia/Seoul`. Calendar-date windows and Redis daily keys must use dates resolved in this timezone.
@@ -14,16 +14,37 @@
 
 ## 2. Idempotency Convention
 
-- Every API that charges points or creates an order requires an `Idempotency-Key` request header.
-- The header value must be a non-blank ASCII string between 1 and 128 characters. A UUID is recommended.
-- The idempotency scope consists of the HTTP method, normalized endpoint path, and key. Path parameters and the request body form the request fingerprint.
-- The idempotency result must be stored in shared durable storage so that retries remain safe across application instances and process restarts.
-- A successful mutation and its idempotency result must commit in the same database transaction.
-- The original successful HTTP status and response body must be retained for at least 24 hours.
-- Repeating the same request in that period with the same key returns the original status and body without repeating any side effect.
-- Concurrent requests with the same key and fingerprint must execute the business operation only once. Other callers receive the original result after it is available.
-- Reusing the same key in the same scope with a different request fingerprint returns `409 Conflict` with `IDEMPOTENCY_KEY_REUSED`.
-- A transaction that rolls back does not persist a successful idempotency result, so the client may retry it with the same key.
+Idempotency records are stored in shared durable storage so retries remain safe across application instances and process restarts. The `operation` and `idempotency_key` columns form the record identity. Supported operations are `POINT_CHARGE` and `ORDER_ATTEMPT`.
+
+### Point Charge Keys
+
+- Every point-charge request requires a client-generated `Idempotency-Key` request header.
+- The value must be a non-blank ASCII string between 1 and 128 characters. A UUID is recommended.
+- The idempotency scope consists of the normalized operation and key. The normalized endpoint path, path parameters, and request body form the canonical request stored with the record.
+- A SHA-256 hash of the canonical request is stored as a 64-character lowercase hexadecimal value.
+- A successful point charge and its `COMPLETED` idempotency result must commit in the same database transaction.
+- Repeating the same request with the same key returns the original HTTP status and response body without repeating a side effect.
+- Reusing the same key for a different canonical request returns `409 Conflict` with `IDEMPOTENCY_KEY_REUSED`.
+
+### Order Attempt Keys
+
+- The order-attempt creation endpoint generates the `orderAttemptId`; a client does not send an `Idempotency-Key` for order confirmation.
+- The server stores the submitted `userId` and `menuId` as the immutable canonical request of a `PENDING` `ORDER_ATTEMPT` record.
+- The client retains the returned `orderAttemptId` until the order is completed or the attempt expires. It may synchronize this value across browser sessions.
+- Confirmation contains no mutable order request body. The server loads and locks the attempt record before applying business logic.
+- Concurrent confirmations of one `PENDING` attempt are serialized. Exactly one transaction may deduct points, create the order and delivery task, and change the attempt to `COMPLETED`.
+- A `COMPLETED` attempt stores its `order_id`, original `201` status, response body, and completion time. Repeating confirmation returns that exact result.
+- Validation, business, and transaction failures do not change the attempt from `PENDING`, so the same attempt may be confirmed again while it remains valid.
+- An expired `PENDING` attempt cannot be confirmed and returns `410 Gone` with `ORDER_ATTEMPT_EXPIRED`.
+
+### Storage and Retention
+
+- A `PENDING` record has no `order_id`, HTTP result, response body, or completion time. This is why `order_id` is physically nullable.
+- A `COMPLETED` `ORDER_ATTEMPT` record must have an `order_id`; a `POINT_CHARGE` record never has one.
+- Every `COMPLETED` record must have its original HTTP status, response body, and completion time.
+- A successful mutation and the transition to `COMPLETED` must commit in the same database transaction.
+- A completed result must be retained for at least 24 hours after `completed_at`; completion updates `expires_at` when necessary to preserve that minimum. A pending attempt is retained until its declared `expires_at`.
+- Expiration cleanup must not remove a record before its applicable retention period ends.
 
 Idempotency protects clients when an HTTP response is lost after a successful commit. It does not change validation or business rules.
 
@@ -200,8 +221,10 @@ Validation errors include one item for each invalid field:
 | `400 Bad Request` | `INVALID_REQUEST` | The path, JSON syntax, or request fields are invalid |
 | `404 Not Found` | `USER_NOT_FOUND` | The requested user does not exist |
 | `404 Not Found` | `MENU_NOT_FOUND` | The requested menu does not exist |
+| `404 Not Found` | `ORDER_ATTEMPT_NOT_FOUND` | The requested order attempt does not exist |
 | `409 Conflict` | `INSUFFICIENT_POINTS` | The user cannot pay the current menu price |
 | `409 Conflict` | `IDEMPOTENCY_KEY_REUSED` | An idempotency key was reused with a different request |
+| `410 Gone` | `ORDER_ATTEMPT_EXPIRED` | The order attempt expired before confirmation |
 | `500 Internal Server Error` | `INTERNAL_SERVER_ERROR` | An unexpected server error occurred |
 | `503 Service Unavailable` | `SERVICE_UNAVAILABLE` | A required dependency is temporarily unavailable |
 

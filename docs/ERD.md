@@ -40,7 +40,6 @@ erDiagram
     ORDER_OUTBOX {
         BIGINT id PK
         BIGINT order_id FK
-        JSON payload
         VARCHAR status
         INT attempt_count
         DATETIME next_attempt_at
@@ -51,16 +50,21 @@ erDiagram
     IDEMPOTENCY_RECORD {
         VARCHAR operation PK
         VARCHAR idempotency_key PK
-        VARCHAR request_hash
-        INT http_status
+        JSON request_body
+        CHAR request_hash
+        VARCHAR status
+        BIGINT order_id FK
+        SMALLINT http_status
         JSON response_body
         DATETIME created_at
+        DATETIME completed_at
         DATETIME expires_at
     }
 
     USERS ||--o{ COFFEE_ORDER : places
     COFFEE_ORDER ||--|{ ORDER_ITEM : contains
     COFFEE_ORDER ||--|| ORDER_OUTBOX : emits
+    COFFEE_ORDER o|--|| IDEMPOTENCY_RECORD : completes
     MENU ||--o{ ORDER_ITEM : purchased_as
 ```
 
@@ -103,36 +107,47 @@ erDiagram
 
 ### `idempotency_record`
 
-This technical table stores successful mutation responses so that client retries remain safe across application instances and process restarts.
+This technical table stores point-charge idempotency results and server-managed order attempts so that retries remain safe across application instances and process restarts.
 
-| Column            | Type       | Constraints                                | Description                                                |
-|-------------------|------------|--------------------------------------------|------------------------------------------------------------|
-| `operation`       | `VARCHAR`  | Composite primary key                      | Normalized HTTP method and endpoint path                    |
-| `idempotency_key` | `VARCHAR`  | Composite primary key                      | Client-provided idempotency key                             |
-| `request_hash`    | `VARCHAR`  | Not null                                   | Stable fingerprint of path parameters and the request body |
-| `http_status`     | `INT`      | Not null                                   | Original successful HTTP status                            |
-| `response_body`   | `JSON`     | Not null                                   | Original successful response body                          |
-| `created_at`      | `DATETIME` | Not null                                   | Time at which the mutation committed                       |
-| `expires_at`      | `DATETIME` | Not null, at least 24 hours after creation | Earliest time at which the result may be removed           |
+| Column            | Type           | Constraints                                              | Description                                                                |
+|-------------------|----------------|----------------------------------------------------------|----------------------------------------------------------------------------|
+| `operation`       | `VARCHAR(64)`  | Composite primary key, `POINT_CHARGE` or `ORDER_ATTEMPT` | Idempotency operation                                                      |
+| `idempotency_key` | `VARCHAR(128)` | Composite primary key, non-blank ASCII                   | Client key for a point charge or server-generated order-attempt identifier |
+| `request_body`    | `JSON`         | Not null                                                 | Immutable canonical request needed to validate or resume the operation     |
+| `request_hash`    | `CHAR(64)`     | Not null, lowercase hexadecimal SHA-256                  | Fingerprint of the canonical request                                       |
+| `status`          | `VARCHAR(16)`  | Not null, `PENDING` or `COMPLETED`                       | Current operation state                                                    |
+| `order_id`        | `BIGINT`       | Nullable, unique, foreign key to `coffee_order.id`       | Completed order; absent for pending attempts and point charges             |
+| `http_status`     | `SMALLINT`     | Nullable                                                 | Original successful HTTP status                                            |
+| `response_body`   | `JSON`         | Nullable                                                 | Original successful common response body                                   |
+| `created_at`      | `DATETIME`     | Not null                                                 | Time at which the record was created                                       |
+| `completed_at`    | `DATETIME`     | Nullable                                                 | Time at which the operation and result committed                           |
+| `expires_at`      | `DATETIME`     | Not null                                                 | Earliest time at which the applicable record may be removed or rejected    |
 
-The successful idempotency record must commit in the same database transaction as its point charge or order side effects. A rolled-back mutation must not leave a successful idempotency record.
+The following conditional constraints are part of the physical model:
+
+- A `PENDING` record has null `order_id`, `http_status`, `response_body`, and `completed_at`.
+- A `COMPLETED` record has non-null `http_status`, `response_body`, and `completed_at`.
+- A `COMPLETED` `ORDER_ATTEMPT` has a non-null `order_id`.
+- A `POINT_CHARGE` always has a null `order_id`, including when it is `COMPLETED`.
+- `expires_at` for a completed result is at least 24 hours after `completed_at` and is extended during completion when necessary. A pending attempt remains available until its declared `expires_at`.
+
+The point-charge side effect and its completed record must commit in the same transaction. An order attempt is first committed as `PENDING`; confirmation locks that record and atomically commits point deduction, the order, its item, its outbox task, and the transition to `COMPLETED`. A rolled-back confirmation leaves the existing attempt `PENDING`.
 
 ### `order_outbox`
 
-This technical table stores one durable data-collection delivery event for each committed order.
+This technical table stores one durable data-collection delivery task for each committed order.
 
-| Column            | Type       | Constraints                                     | Description                                            |
-|-------------------|------------|-------------------------------------------------|--------------------------------------------------------|
-| `id`              | `BIGINT`   | Primary key                                     | Delivery-event identifier                              |
-| `order_id`        | `BIGINT`   | Not null, unique, foreign key to `coffee_order` | Order identifier and external delivery idempotency key |
-| `payload`         | `JSON`     | Not null                                        | Immutable data-collection payload                      |
-| `status`          | `VARCHAR`  | Not null, `PENDING` or `DELIVERED`               | Current delivery state                                 |
-| `attempt_count`   | `INT`      | Not null, check `attempt_count >= 0`             | Number of delivery attempts                            |
-| `next_attempt_at` | `DATETIME` | Nullable                                        | Time at which a failed event becomes eligible for retry |
-| `created_at`      | `DATETIME` | Not null                                        | Time at which the order and event committed            |
-| `delivered_at`    | `DATETIME` | Nullable                                        | Time at which the collector acknowledged the event     |
+| Column            | Type          | Constraints                                        | Description                                            |
+|-------------------|---------------|----------------------------------------------------|--------------------------------------------------------|
+| `id`              | `BIGINT`      | Primary key                                        | Delivery-task identifier                               |
+| `order_id`        | `BIGINT`      | Not null, unique, foreign key to `coffee_order.id` | Source order and external delivery idempotency key     |
+| `status`          | `VARCHAR(16)` | Not null, `PENDING` or `DELIVERED`                 | Current delivery state                                 |
+| `attempt_count`   | `INT`         | Not null, check `attempt_count >= 0`               | Number of delivery attempts                            |
+| `next_attempt_at` | `DATETIME`    | Nullable                                           | Time at which a failed task becomes eligible for retry |
+| `created_at`      | `DATETIME`    | Not null                                           | Time at which the order and task committed             |
+| `delivered_at`    | `DATETIME`    | Nullable                                           | Time at which the collector acknowledged the delivery  |
 
-The order and its outbox event must commit in the same database transaction. A worker retries `PENDING` events until the collector acknowledges them and then marks them `DELIVERED`.
+The order and its outbox task must commit in the same database transaction. The outbox stores only `order_id`; it does not duplicate the payload as JSON. A worker builds the payload from the immutable `coffee_order` and `order_item` rows, retries `PENDING` tasks until the collector acknowledges them, and then marks them `DELIVERED`.
 
 ## 4. Relationship and Consistency Rules
 
@@ -144,16 +159,18 @@ The order and its outbox event must commit in the same database transaction. A w
 - `order_item.line_amount` must equal `order_item.unit_price * order_item.quantity`.
 - `coffee_order.total_amount` must equal the sum of its order-item line amounts.
 - Point deduction, order creation, and order-item creation must succeed or fail in one database transaction.
-- A successful mutation and its idempotency result must succeed or fail in one database transaction.
-- Every committed order has exactly one `order_outbox` event, created in the order transaction.
+- A successful mutation and its completed idempotency result must succeed or fail in one database transaction.
+- Every committed order has exactly one completed `ORDER_ATTEMPT` idempotency record.
+- Every committed order has exactly one `order_outbox` task, created in the order transaction.
 - Only successfully paid orders are persisted.
+- Completed orders and their order items are immutable and remain available while an outbox task references them.
 - `users.balance` must never become negative, including under concurrent requests from multiple application instances.
 
 The ERD defines these invariants without selecting an optimistic or pessimistic locking mechanism. The technical design must choose and test a concurrency strategy that preserves them.
 
 ## 5. External Data Collection Payload
 
-The data collection platform is not part of the relational model. After a successful payment, the application builds the required payload from the persisted order and its item and sends it in near real time.
+The data collection platform is not part of the relational model. After a successful payment, the application uses `order_outbox.order_id` to read the persisted immutable order and its item, builds the required payload, and sends it in near real time.
 
 ```json
 {
@@ -164,7 +181,7 @@ The data collection platform is not part of the relational model. After a succes
 }
 ```
 
-The application delivers the event at least once and retries it from `order_outbox` until the data collection platform acknowledges it. The collector uses `orderId` as the idempotency key and ignores an event that it has already processed. The outbox is a technical reliability mechanism and does not change the core domain relationships.
+The application delivers the payload at least once and retries it from `order_outbox` until the data collection platform acknowledges it. This provides eventual delivery when the platform eventually becomes available. The collector uses `orderId` as the idempotency key and ignores a payload that it has already processed. The outbox is a technical reliability mechanism and does not change the core domain relationships.
 
 ## 6. Redis Popular Menu View
 
