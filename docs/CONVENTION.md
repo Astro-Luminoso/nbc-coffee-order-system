@@ -32,10 +32,25 @@ Idempotency protects clients when an HTTP response is lost after a successful co
 Every endpoint returns a `CommonApiResponse<T>` body containing the HTTP status and an endpoint-specific response DTO in `data`.
 
 ```java
+/**
+ * API 공통 응답을 표현한다.
+ *
+ * @param httpStatus HTTP 상태 코드
+ * @param data 응답 데이터
+ * @param <T> 응답 데이터 타입
+ */
 public record CommonApiResponse<T>(
         int httpStatus,
         T data
 ) {
+    /**
+     * HTTP 상태 코드와 응답 데이터로 공통 응답을 생성한다.
+     *
+     * @param httpStatus HTTP 상태 코드
+     * @param data 응답 데이터
+     * @param <T> 응답 데이터 타입
+     * @return 생성된 공통 API 응답
+     */
     public static <T> CommonApiResponse<T> of(int httpStatus, T data) {
         return new CommonApiResponse<>(httpStatus, data);
     }
@@ -75,9 +90,20 @@ Content-Type: application/json
 Example endpoint response DTO:
 
 ```java
+/**
+ * 메뉴 목록 응답을 표현한다.
+ *
+ * @param menus 메뉴 응답 목록
+ */
 public record MenuListResponse(
         List<MenuResponse> menus
 ) {
+    /**
+     * 메뉴 목록을 API 응답으로 변환한다.
+     *
+     * @param menus 변환할 메뉴 목록
+     * @return 생성된 메뉴 목록 응답
+     */
     public static MenuListResponse from(List<Menu> menus) {
         return new MenuListResponse(
                 menus.stream()
@@ -86,11 +112,24 @@ public record MenuListResponse(
         );
     }
 
+    /**
+     * 단일 메뉴 응답을 표현한다.
+     *
+     * @param id 메뉴 식별자
+     * @param name 메뉴 이름
+     * @param price 메뉴 가격
+     */
     public record MenuResponse(
             Long id,
             String name,
             Long price
     ) {
+        /**
+         * 메뉴를 API 응답으로 변환한다.
+         *
+         * @param menu 변환할 메뉴
+         * @return 생성된 메뉴 응답
+         */
         public static MenuResponse from(Menu menu) {
             return new MenuResponse(
                     menu.getId(),
@@ -102,7 +141,15 @@ public record MenuListResponse(
 }
 ```
 
-## 5. Exception Handling
+## 5. Java Code Conventions
+
+- Lombok `@Getter`, `@Setter`, and `@Builder` annotations are prohibited.
+- Classes must declare explicit methods only for behavior and access that the application actually requires.
+- Every class, record, interface, enum, and method must have Javadoc written in Korean.
+- All line comments (`//`) and block comments (`/* ... */`) written by the project must be in Korean.
+- Javadoc tags such as `@param`, `@return`, and `@throws` remain in their standard form, but their descriptions must be in Korean.
+
+## 6. Exception Handling
 
 Business and application failures are represented by `CommonException`. The exception contains a stable error code and the HTTP status returned to the client.
 Controllers must not catch `CommonException`; `GlobalExceptionHandler` converts it into the common API response.
@@ -158,7 +205,7 @@ Validation errors include one item for each invalid field:
 | `500 Internal Server Error` | `INTERNAL_SERVER_ERROR` | An unexpected server error occurred |
 | `503 Service Unavailable` | `SERVICE_UNAVAILABLE` | A required dependency is temporarily unavailable |
 
-## 6. Logging Convention
+## 7. Logging Convention
 
 - Console log messages written by the application must be in Korean.
 - Expected client errors may be logged without a stack trace.
