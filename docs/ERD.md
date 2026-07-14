@@ -198,11 +198,10 @@ The popular-menu view is not a relational table. It is a Redis ZSET projection d
 
 ```mermaid
 flowchart
-    A["Paid order and order item in MySQL"] --> B["Duplicate-safe popularity update"]
-    B --> C["ZINCRBY popular-menu:{yyyy-MM-dd} 1 menu:{id}"]
-    C --> D["Combine the seven completed ZSETs before the current date"]
-    D --> E["Return top three menu IDs and scores"]
-    E --> F["Resolve menu names and prices from MySQL"]
+    A["Paid order and order item in MySQL"] --> B["Aggregate exact counts from MySQL"]
+    B --> C["Return top three menu IDs and scores"]
+    B --> D["Refresh rebuildable Redis ZSET cache"]
+    C --> E["Resolve menu names and prices from MySQL"]
 ```
 
-Each successfully paid order item must increment the selected menu exactly once. A missing or inconsistent Redis projection must be rebuildable from MySQL. TTL applies to the daily ZSET key, not to individual menu members.
+The application must calculate each popular-menu response from a MySQL aggregation of paid orders and order items in the requested period. Redis ZSETs are a rebuildable cache of that aggregation and must not be the authoritative source for an API response. A missing or inconsistent cache is rebuilt from MySQL without changing the returned counts. TTL applies to the daily ZSET key, not to individual menu members.

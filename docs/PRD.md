@@ -87,7 +87,7 @@ The application must not depend on in-memory state for correctness. Shared MySQL
 | Menu              | `id`, `name`, `price`                                            | Represents a coffee available for ordering. The price must be positive.                                                                                      |
 | Order             | `id`, `userId`, `totalAmount`, `orderedAt`                       | Represents a completed POS sale. An order is persisted only after point payment succeeds and contains one or more order items.                               |
 | Order Item        | `id`, `orderId`, `menuId`, `quantity`, `unitPrice`, `lineAmount` | Represents a purchased menu line and preserves its price at payment time. The current API creates exactly one item with quantity `1`.                        |
-| Popular Menu View | Daily ZSET key, `menuId` member, paid-order-count score, key TTL | Redis-derived read model for ranking menus. It is not an RDBMS table and must remain rebuildable from paid order items in MySQL.                             |
+| Popular Menu View | Daily ZSET key, `menuId` member, paid-order-count score, key TTL | Redis-derived cache for ranking menus. The API calculates exact rankings from MySQL paid order items, and the cache remains rebuildable from those items.    |
 
 ### Popular Menu View Storage Model
 
@@ -101,13 +101,13 @@ The popular-menu view is stored as one Redis ZSET for each calendar date in the 
 | Score         | Paid order count            | Number of successfully paid orders for the menu on that date         |
 | TTL           | Daily ZSET key expiration   | Removes the entire expired daily bucket after it is no longer needed |
 
-For example, if menu `1` is ordered successfully, the application increments its score in that date's key:
+For example, after the application aggregates the authoritative MySQL data for one date, it may refresh that date's cached score for menu `1`:
 
 ```redis
-ZINCRBY popular-menu:2026-07-10 1 menu:1
+ZADD popular-menu:2026-07-10 42 menu:1
 ```
 
-The top-three query combines the seven completed date buckets immediately before the current date, sums scores by `menuId`, and returns the three members with the highest combined scores. The current date's ZSET is not included. The API resolves each member's menu name and other display information from the MySQL `Menu` data.
+The top-three query aggregates the seven completed calendar-date buckets immediately before the current date from MySQL, sums counts by `menuId`, and returns the three members with the highest combined scores. The current date's ZSET is not included. Redis caches may be refreshed from the same aggregation but must not decide the API result. The API resolves each member's menu name and other display information from the MySQL `Menu` data.
 
 TTL applies to each daily ZSET key, not to individual ZSET members. Each bucket must expire at a fixed time after the seven-day query window so that it cannot disappear while still participating in a valid ranking query.
 
@@ -117,7 +117,7 @@ TTL applies to each daily ZSET key, not to individual ZSET members. Each bucket 
 - A user can place many orders.
 - An order contains one or more order items. The current API creates exactly one order item per order.
 - A menu can be referenced by many order items.
-- The popular-menu view is a Redis projection derived from MySQL paid order items grouped by date and menu.
+- The popular-menu view is a Redis cache derived from MySQL paid order items grouped by date and menu.
 - A daily ZSET contains many menus, and the same menu may appear in each date bucket in which it was ordered.
 
 ### Business Rules
@@ -141,9 +141,8 @@ TTL applies to each daily ZSET key, not to individual ZSET members. Each bucket 
 - Every committed order creates one durable outbox task that references the order. A worker reconstructs the payload from immutable order data and retries delivery at least once until acknowledged, providing eventual delivery when the platform becomes available.
 - A delivery failure after the order transaction commits does not roll back the order or change its `201 Created` response. The collector deduplicates retries by `orderId`.
 - Popularity uses only successfully paid orders from the seven completed calendar dates immediately before the current date in the `Asia/Seoul` business timezone.
-- A successful payment increments the corresponding `menuId` score in that date's ZSET exactly once.
-- Redis `ZINCRBY` operations and duplicate-safe popularity updates must prevent lost or duplicated counts across application instances.
-- MySQL paid orders and order items are the source of truth; daily ZSETs must be rebuildable or reconcilable if Redis data is lost or inconsistent.
+- A successful payment is persisted in MySQL before it can contribute to popularity. Redis cache writes do not determine the result returned by the popular-menu API.
+- MySQL paid orders and order items are the source of truth. Every popular-menu response aggregates that source for its query window, and daily ZSETs may be rebuilt from the same aggregation when Redis data is lost or inconsistent.
 - Popular-menu counts must be consistent across all running application instances.
 - When order counts are tied, a deterministic secondary ordering must be defined in the API specification.
 
@@ -157,7 +156,7 @@ TTL applies to each daily ZSET key, not to individual ZSET members. Each bucket 
 | F-02 | Point charge                  | Accept a user identifier and charge amount; apply `1 KRW = 1 point`.                                                      | A valid charge increases the correct user's balance exactly once and returns the resulting balance.                                                                                                                                                                                                                                                                     |
 | F-03 | Coffee order and payment      | Create a server-managed order attempt from a user identifier and menu ID, then confirm it and pay only with points.       | A successful confirmation returns `201 Created` only after atomically deducting the exact menu price, creating one order item of quantity `1`, creating its outbox task, and completing the attempt. Retrying the completed attempt returns the original response. An invalid menu, insufficient balance, or rolled-back transaction creates no paid-order side effect. |
 | F-04 | Real-time order data delivery | Send the user identifier, menu ID, and payment amount to a data collection platform.                                      | Each successfully paid order creates one durable task. Delivery is at least once and retried until acknowledged; the collector deduplicates by `orderId`. A post-commit delivery failure does not change the order response or roll back persisted order data.                                                                                                          |
-| F-05 | Popular menu list             | Return the three most ordered menus across the seven completed calendar-date buckets immediately before the current date. | The response excludes the current date, combines the preceding seven daily ZSETs, and contains at most three menus based on exact paid-order counts.                                                                                                                                                                                                                    |
+| F-05 | Popular menu list             | Return the three most ordered menus across the seven completed calendar-date buckets immediately before the current date. | The response excludes the current date, aggregates the preceding seven calendar dates from MySQL, and contains at most three menus based on exact paid-order counts. Redis caching does not change the result.                                                                                                                                                          |
 
 ### Quality and Delivery Features
 

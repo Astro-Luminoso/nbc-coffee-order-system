@@ -300,6 +300,6 @@ If no paid orders exist in the period, the endpoint returns `200 OK` with an emp
 - A repeated confirmation of the same completed `orderAttemptId` returns its original response without repeating side effects.
 - A rejected order leaves the user's balance and order data unchanged.
 - Every order created by this API contains one order item with quantity `1`.
-- Popularity includes only successfully paid orders and counts each successful order once.
+- Popularity includes only successfully paid orders and counts each successful order once. The popular-menu response derives its counts from MySQL paid-order data; Redis is a rebuildable cache and does not determine the result.
 - Every committed order has one durable delivery task, and delivery retries use `orderId` to prevent duplicate processing by the data collection platform.
-- MySQL order data remains the source of truth when the Redis popularity projection requires reconciliation.
+- MySQL order data remains the source of truth when the Redis popularity cache requires reconstruction. The application rebuilds a lost or inconsistent daily ZSET from MySQL without changing the popular-menu response.
