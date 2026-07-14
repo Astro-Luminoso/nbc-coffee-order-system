@@ -11,13 +11,14 @@
 
 ## Origin Source Router
 
-| About                                                | Source          |
-|------------------------------------------------------|-----------------|
-| Any Tech Stack or Dependency                         | `build.gradle`  |
-| Product Goal, Business Rules, Acceptance Criterias   | `./docs/PRD.md` |
-| Entities, Entities' tuples, Contraints and Relations | `./docs/ERD.md` |
+| About                                                | Source                 |
+|------------------------------------------------------|------------------------|
+| Any Tech Stack or Dependency                         | `build.gradle`         |
+| Product Goal, Business Rules, Acceptance Criterias   | `./docs/PRD.md`        |
+| Entities, Entities' tuples, Contraints and Relations | `./docs/ERD.md`        |
+| HTTP API Contract                                    | `./docs/API.md`        |
+| API, DTO, Exception, Idempotency and Logging Rules   | `./docs/CONVENTION.md` |
 
 
 ## Common Mistake Prevention
 - You must write any .md documentation in English, but all logs and outputs to console must be written in Korean.
-
