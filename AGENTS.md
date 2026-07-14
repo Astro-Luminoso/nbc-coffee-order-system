@@ -15,6 +15,7 @@
 |------------------------------------------------------|------------------------|
 | Any Tech Stack or Dependency                         | `build.gradle`         |
 | Product Goal, Business Rules, Acceptance Criterias   | `./docs/PRD.md`        |
+| Api Architecture                                    | `./docs/ARCHITECTURE.md` |
 | Entities, Entities' tuples, Contraints and Relations | `./docs/ERD.md`        |
 | HTTP API Contract                                    | `./docs/API.md`        |
 | API, DTO, Exception, Idempotency and Logging Rules   | `./docs/CONVENTION.md` |
