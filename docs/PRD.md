@@ -4,7 +4,7 @@
 
 The goal of this assignment is to build a reliable backend for a coffee ordering service.
 A user must be able to browse coffee menus, charge points, order and pay for a coffee with those points,
-and view the three most popular menus from the last seven days.
+and view the three most popular menus from the seven completed calendar dates immediately before the current date.
 
 The solution must demonstrate more than basic API behavior.
 It must remain correct when multiple application instances are running, protect point balances and order counts from concurrency issues,
@@ -17,7 +17,7 @@ preserve data consistency, and include tests for every feature and constraint.
 - Coffee purchases can be paid for only with points.
 - Creating an order and deducting its payment amount are processed consistently.
 - Every successfully paid order is sent to a data collection platform in near real time.
-- The top three menus are calculated from exact paid-order counts for the current calendar date and the previous six dates in the configured business timezone.
+- The top three menus are calculated from exact paid-order counts for the seven completed calendar dates immediately before the current date in the `Asia/Seoul` business timezone. The current date is excluded.
 - The application works correctly when multiple server instances run at the same time.
 - Automated tests cover features, business rules, concurrency, and consistency constraints.
 - The project `README.md` documents the ERD, API specification, design intent, problem-solving strategy and analysis, and reasons for technical choices.
@@ -49,7 +49,7 @@ preserve data consistency, and include tests for every feature and constraint.
 ### Scenario 4: View Popular Menus
 
 1. A user requests the popular-menu list.
-2. The system counts successfully paid orders for each menu from the current calendar date and the previous six dates.
+2. The system counts successfully paid orders for each menu from the seven completed calendar dates immediately before the current date.
 3. The system returns up to three menus ordered by order count from highest to lowest.
 4. The result must remain accurate across multiple application instances and concurrent orders.
 
@@ -90,7 +90,7 @@ The application must not depend on in-memory state for correctness. Shared MySQL
 
 ### Popular Menu View Storage Model
 
-The popular-menu view is stored as one Redis ZSET for each calendar date in the configured business timezone.
+The popular-menu view is stored as one Redis ZSET for each calendar date in the `Asia/Seoul` business timezone.
 
 | Redis Element | Format                      | Meaning                                                              |
 |---------------|-----------------------------|----------------------------------------------------------------------|
@@ -106,7 +106,7 @@ For example, if menu `1` is ordered successfully, the application increments its
 ZINCRBY popular-menu:2026-07-10 1 menu:1
 ```
 
-The top-three query combines the current date's ZSET and the previous six date buckets, sums scores by `menuId`, and returns the three members with the highest combined scores. The API resolves each member's menu name and other display information from the MySQL `Menu` data.
+The top-three query combines the seven completed date buckets immediately before the current date, sums scores by `menuId`, and returns the three members with the highest combined scores. The current date's ZSET is not included. The API resolves each member's menu name and other display information from the MySQL `Menu` data.
 
 TTL applies to each daily ZSET key, not to individual ZSET members. Each bucket must expire at a fixed time after the seven-day query window so that it cannot disappear while still participating in a valid ranking query.
 
@@ -132,7 +132,7 @@ TTL applies to each daily ZSET key, not to individual ZSET members. Each bucket 
 - Only successfully paid orders are persisted.
 - Concurrent charges and payments must not lose updates or allow overspending.
 - The application sends the user ID, menu ID, and payment amount from the completed order to the data collection platform in near real time. This transmission is application behavior and does not add another core domain entity.
-- Popularity uses only successfully paid orders from the current calendar date and the previous six dates in the configured business timezone.
+- Popularity uses only successfully paid orders from the seven completed calendar dates immediately before the current date in the `Asia/Seoul` business timezone.
 - A successful payment increments the corresponding `menuId` score in that date's ZSET exactly once.
 - Redis `ZINCRBY` operations and duplicate-safe popularity updates must prevent lost or duplicated counts across application instances.
 - MySQL paid orders and order items are the source of truth; daily ZSETs must be rebuildable or reconcilable if Redis data is lost or inconsistent.
@@ -149,7 +149,7 @@ TTL applies to each daily ZSET key, not to individual ZSET members. Each bucket 
 | F-02 | Point charge                  | Accept a user identifier and charge amount; apply `1 KRW = 1 point`.                 | A valid charge increases the correct user's balance exactly once and returns the resulting balance.                                                                                                         |
 | F-03 | Coffee order and payment      | Accept a user identifier and menu ID; pay only with points.                          | A successful request deducts the exact menu price and atomically creates an order with one order item of quantity `1`. An invalid menu or insufficient balance produces no order, order item, or deduction. |
 | F-04 | Real-time order data delivery | Send the user identifier, menu ID, and payment amount to a data collection platform. | Each successfully paid order sends the required payload to the configured mock or external data collector in near real time.                                                                                |
-| F-05 | Popular menu list             | Return the three most ordered menus across the latest seven calendar-date buckets.   | The response combines the seven daily ZSETs and contains at most three menus based on exact paid-order counts.                                                                                              |
+| F-05 | Popular menu list             | Return the three most ordered menus across the seven completed calendar-date buckets immediately before the current date. | The response excludes the current date, combines the preceding seven daily ZSETs, and contains at most three menus based on exact paid-order counts.                                                         |
 
 ### Quality and Delivery Features
 

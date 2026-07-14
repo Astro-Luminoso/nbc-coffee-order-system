@@ -8,10 +8,26 @@
 - Identifiers are positive 64-bit integers.
 - Prices, charges, balances, and payment amounts are integer points. One Korean won equals one point.
 - Date-time values use ISO 8601 with a UTC offset, such as `2026-07-13T14:30:00+09:00`.
+- The business timezone is `Asia/Seoul`. Calendar-date windows and Redis daily keys must use dates resolved in this timezone.
 - Unknown JSON request fields are ignored for forward compatibility.
 - Authentication and authorization are outside the current API scope.
 
-## 2. Common API Response
+## 2. Idempotency Convention
+
+- Every API that charges points or creates an order requires an `Idempotency-Key` request header.
+- The header value must be a non-blank ASCII string between 1 and 128 characters. A UUID is recommended.
+- The idempotency scope consists of the HTTP method, normalized endpoint path, and key. Path parameters and the request body form the request fingerprint.
+- The idempotency result must be stored in shared durable storage so that retries remain safe across application instances and process restarts.
+- A successful mutation and its idempotency result must commit in the same database transaction.
+- The original successful HTTP status and response body must be retained for at least 24 hours.
+- Repeating the same request in that period with the same key returns the original status and body without repeating any side effect.
+- Concurrent requests with the same key and fingerprint must execute the business operation only once. Other callers receive the original result after it is available.
+- Reusing the same key in the same scope with a different request fingerprint returns `409 Conflict` with `IDEMPOTENCY_KEY_REUSED`.
+- A transaction that rolls back does not persist a successful idempotency result, so the client may retry it with the same key.
+
+Idempotency protects clients when an HTTP response is lost after a successful commit. It does not change validation or business rules.
+
+## 3. Common API Response
 
 Every endpoint returns a `CommonApiResponse<T>` body containing the HTTP status and an endpoint-specific response DTO in `data`.
 
@@ -20,6 +36,9 @@ public record CommonApiResponse<T>(
         int httpStatus,
         T data
 ) {
+    public static <T> CommonApiResponse<T> of(int httpStatus, T data) {
+        return new CommonApiResponse<>(httpStatus, data);
+    }
 }
 ```
 
@@ -42,13 +61,16 @@ Content-Type: application/json
 }
 ```
 
-## 3. Response DTO Conventions
+## 4. Response DTO Conventions
 
 - Every response DTO must be declared as a Java `record`.
 - Response DTOs must contain API-facing values only and must not expose JPA entities.
 - A collection response must return an empty array instead of `null` when no items exist.
 - A response field that is required by the API contract must not be `null`.
 - The common response wrapper and nested error responses are also records.
+- Response DTOs must provide static factory methods and must be created through those methods outside the DTO.
+- Use `from(...)` when converting one source object and `of(...)` when composing a response from multiple values or source objects.
+- Mapping and response-construction rules belong in the static factory method rather than in controllers.
 
 Example endpoint response DTO:
 
@@ -56,16 +78,31 @@ Example endpoint response DTO:
 public record MenuListResponse(
         List<MenuResponse> menus
 ) {
+    public static MenuListResponse from(List<Menu> menus) {
+        return new MenuListResponse(
+                menus.stream()
+                        .map(MenuResponse::from)
+                        .toList()
+        );
+    }
+
     public record MenuResponse(
             Long id,
             String name,
             Long price
     ) {
+        public static MenuResponse from(Menu menu) {
+            return new MenuResponse(
+                    menu.getId(),
+                    menu.getName(),
+                    menu.getPrice()
+            );
+        }
     }
 }
 ```
 
-## 4. Exception Handling
+## 5. Exception Handling
 
 Business and application failures are represented by `CommonException`. The exception contains a stable error code and the HTTP status returned to the client.
 Controllers must not catch `CommonException`; `GlobalExceptionHandler` converts it into the common API response.
@@ -117,10 +154,11 @@ Validation errors include one item for each invalid field:
 | `404 Not Found` | `USER_NOT_FOUND` | The requested user does not exist |
 | `404 Not Found` | `MENU_NOT_FOUND` | The requested menu does not exist |
 | `409 Conflict` | `INSUFFICIENT_POINTS` | The user cannot pay the current menu price |
+| `409 Conflict` | `IDEMPOTENCY_KEY_REUSED` | An idempotency key was reused with a different request |
 | `500 Internal Server Error` | `INTERNAL_SERVER_ERROR` | An unexpected server error occurred |
 | `503 Service Unavailable` | `SERVICE_UNAVAILABLE` | A required dependency is temporarily unavailable |
 
-## 5. Logging Convention
+## 6. Logging Convention
 
 - Console log messages written by the application must be in Korean.
 - Expected client errors may be logged without a stack trace.
