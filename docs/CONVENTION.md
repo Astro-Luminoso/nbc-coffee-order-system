@@ -97,7 +97,14 @@ Content-Type: application/json
 }
 ```
 
-## 4. Response DTO Conventions
+## 4. Request DTO Conventions
+
+- Every API request DTO must be declared as a Java `record`.
+- Every request DTO component must declare the applicable constraints from the Jakarta Validation dependency (for example, `@NotNull`, `@NotBlank`, `@Positive`, `@Size`, or `@Pattern`). Do not defer client-input validation solely to service-layer code.
+- Controllers must apply `@Valid` to each request DTO parameter so that validation occurs before the application processes the request.
+- Constraint choices and messages must match the API contract. A request whose values violate its declared constraints returns `400 Bad Request` through `GlobalExceptionHandler`.
+
+## 5. Response DTO Conventions
 
 - Every response DTO must be declared as a Java `record`.
 - Response DTOs must contain API-facing values only and must not expose JPA entities.
@@ -162,7 +169,7 @@ public record MenuListResponse(
 }
 ```
 
-## 5. Java Code Conventions
+## 6. Java Code Conventions
 
 - Lombok `@Getter`, `@Setter`, and `@Builder` annotations are prohibited.
 - Classes must declare explicit methods only for behavior and access that the application actually requires.
@@ -170,7 +177,7 @@ public record MenuListResponse(
 - All line comments (`//`) and block comments (`/* ... */`) written by the project must be in Korean.
 - Javadoc tags such as `@param`, `@return`, and `@throws` remain in their standard form, but their descriptions must be in Korean.
 
-## 6. Exception Handling
+## 7. Exception Handling
 
 All application failures must be represented by a situation-specific custom exception that extends `ServiceException`.
 `ServiceException` extends `RuntimeException` and has the following properties:
@@ -236,7 +243,7 @@ Validation errors include one item for each invalid field:
 | `InternalServerErrorException` | `500 Internal Server Error` | `INTERNAL_SERVER_ERROR` | An unexpected server error occurred |
 | `ServiceUnavailableException` | `503 Service Unavailable` | `SERVICE_UNAVAILABLE` | A required dependency is temporarily unavailable |
 
-## 7. Logging Convention
+## 8. Logging Convention
 
 - Console log messages written by the application must be in Korean.
 - Expected client errors may be logged without a stack trace.
