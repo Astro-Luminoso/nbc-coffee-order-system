@@ -225,6 +225,23 @@ After commit, a worker reads the immutable `coffee_order` and `order_item` rows 
 
 Delivery is at least once. The worker retries the durable task until the data collection platform acknowledges it, which provides eventual delivery when the platform eventually becomes available. The platform uses `orderId` as its idempotency key to ignore duplicate deliveries. A delivery failure after commit does not reverse the payment or order and does not change the original `201 Created` response. The application records the failure in Korean operational logs and continues retrying.
 
+### MockAPI Delivery Contract
+
+MockAPI is the data-collection platform for order records. The application must keep its MockAPI base URL and resource path in external configuration; the endpoint URL must not be hard-coded or documented as a literal value.
+
+For each `PENDING` `order_outbox` task, a delivery worker performs one HTTP request:
+
+| Request part | Value |
+|--------------|-------|
+| Method | `POST` |
+| Target | The configured MockAPI order-record resource |
+| Headers | `Content-Type: application/json` |
+| Body | The order-record JSON payload shown above |
+
+The worker receives MockAPI's HTTP response after sending the request. A `2xx` response, normally `201 Created` for a newly created MockAPI resource, acknowledges the delivery. The response body may contain the stored order-record fields and a MockAPI-generated resource ID. The application does not use that generated ID as its order identifier or persist it as the source of truth; `orderId` in the request body remains the stable idempotency key.
+
+If the worker receives a non-`2xx` response, times out, or cannot establish a connection, it leaves the task `PENDING`, increments its attempt count, schedules the next attempt, and records the failure in Korean operational logs. It marks the task `DELIVERED` only after a successful acknowledgement. Because a retry can reach MockAPI after a previous request was processed but its response was lost, the receiving order-record collection must treat repeated `orderId` values as the same logical delivery.
+
 ### Errors
 
 | Condition                                                     | Status                      | Code                      |
