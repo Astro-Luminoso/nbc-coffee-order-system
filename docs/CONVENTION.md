@@ -172,11 +172,19 @@ public record MenuListResponse(
 
 ## 6. Exception Handling
 
-Business and application failures are represented by `CommonException`. The exception contains a stable error code and the HTTP status returned to the client.
-Controllers must not catch `CommonException`; `GlobalExceptionHandler` converts it into the common API response.
+All application failures must be represented by a situation-specific custom exception that extends `ServiceException`.
+`ServiceException` extends `RuntimeException` and has the following properties:
 
-Validation, malformed request, and unexpected exceptions are also handled centrally by `GlobalExceptionHandler`.
-Unexpected exception details and stack traces must not be returned to clients.
+- `message`: The client-safe failure message. It is passed to and obtained from `RuntimeException`.
+- `httpStatus`: The `HttpStatus` returned to the client.
+
+`ServiceException` must expose its `HttpStatus` through an explicit accessor. It must not use a generic application error-code property. The error response `code` is derived from the custom exception class name by removing the `Exception` suffix and converting the remaining name to uppercase snake case. For example, `InsufficientPointsException` produces `INSUFFICIENT_POINTS`.
+
+Each custom exception class name must describe the failure situation, such as `UserNotFoundException` or `InsufficientPointsException`. Do not use vague names such as `CommonException`, `BusinessException`, or `CustomException`.
+
+Controllers must not catch `ServiceException` or its subclasses; `GlobalExceptionHandler` converts them into the common API response.
+
+`GlobalExceptionHandler` converts framework validation and malformed-request failures to `InvalidRequestException`, and converts unexpected failures to `InternalServerErrorException` before creating the response. Application code must not expose framework exception details or stack traces to clients.
 
 Example error response:
 
@@ -214,19 +222,19 @@ Validation errors include one item for each invalid field:
 }
 ```
 
-### Common Errors
+### Standard Exception Mapping
 
-| HTTP status | Code | Meaning |
-|-------------|------|---------|
-| `400 Bad Request` | `INVALID_REQUEST` | The path, JSON syntax, or request fields are invalid |
-| `404 Not Found` | `USER_NOT_FOUND` | The requested user does not exist |
-| `404 Not Found` | `MENU_NOT_FOUND` | The requested menu does not exist |
-| `404 Not Found` | `ORDER_ATTEMPT_NOT_FOUND` | The requested order attempt does not exist |
-| `409 Conflict` | `INSUFFICIENT_POINTS` | The user cannot pay the current menu price |
-| `409 Conflict` | `IDEMPOTENCY_KEY_REUSED` | An idempotency key was reused with a different request |
-| `410 Gone` | `ORDER_ATTEMPT_EXPIRED` | The order attempt expired before confirmation |
-| `500 Internal Server Error` | `INTERNAL_SERVER_ERROR` | An unexpected server error occurred |
-| `503 Service Unavailable` | `SERVICE_UNAVAILABLE` | A required dependency is temporarily unavailable |
+| Exception class | HTTP status | Response code | Meaning |
+|-----------------|-------------|---------------|---------|
+| `InvalidRequestException` | `400 Bad Request` | `INVALID_REQUEST` | The path, JSON syntax, or request fields are invalid |
+| `UserNotFoundException` | `404 Not Found` | `USER_NOT_FOUND` | The requested user does not exist |
+| `MenuNotFoundException` | `404 Not Found` | `MENU_NOT_FOUND` | The requested menu does not exist |
+| `OrderAttemptNotFoundException` | `404 Not Found` | `ORDER_ATTEMPT_NOT_FOUND` | The order attempt does not exist |
+| `InsufficientPointsException` | `409 Conflict` | `INSUFFICIENT_POINTS` | The user cannot pay the current menu price |
+| `IdempotencyKeyReusedException` | `409 Conflict` | `IDEMPOTENCY_KEY_REUSED` | An idempotency key was reused with a different request |
+| `OrderAttemptExpiredException` | `410 Gone` | `ORDER_ATTEMPT_EXPIRED` | The order attempt expired before confirmation |
+| `InternalServerErrorException` | `500 Internal Server Error` | `INTERNAL_SERVER_ERROR` | An unexpected server error occurred |
+| `ServiceUnavailableException` | `503 Service Unavailable` | `SERVICE_UNAVAILABLE` | A required dependency is temporarily unavailable |
 
 ## 7. Logging Convention
 
