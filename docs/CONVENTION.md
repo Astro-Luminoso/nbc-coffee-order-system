@@ -184,7 +184,7 @@ Each custom exception class name must describe the failure situation, such as `U
 
 Controllers must not catch `ServiceException` or its subclasses; `GlobalExceptionHandler` converts them into the common API response.
 
-`GlobalExceptionHandler` converts framework validation and malformed-request failures to `InvalidRequestException`, and converts unexpected failures to `InternalServerException` before creating the response. Application code must not expose framework exception details or stack traces to clients.
+`GlobalExceptionHandler` converts framework validation and malformed-request failures to `InvalidRequestException`, and converts unexpected failures to `InternalServerErrorException` before creating the response. Application code must not expose framework exception details or stack traces to clients.
 
 Example error response:
 
@@ -233,7 +233,7 @@ Validation errors include one item for each invalid field:
 | `InsufficientPointsException` | `409 Conflict` | `INSUFFICIENT_POINTS` | The user cannot pay the current menu price |
 | `IdempotencyKeyReusedException` | `409 Conflict` | `IDEMPOTENCY_KEY_REUSED` | An idempotency key was reused with a different request |
 | `OrderAttemptExpiredException` | `410 Gone` | `ORDER_ATTEMPT_EXPIRED` | The order attempt expired before confirmation |
-| `InternalServerException` | `500 Internal Server Error` | `INTERNAL_SERVER_ERROR` | An unexpected server error occurred |
+| `InternalServerErrorException` | `500 Internal Server Error` | `INTERNAL_SERVER_ERROR` | An unexpected server error occurred |
 | `ServiceUnavailableException` | `503 Service Unavailable` | `SERVICE_UNAVAILABLE` | A required dependency is temporarily unavailable |
 
 ## 7. Logging Convention

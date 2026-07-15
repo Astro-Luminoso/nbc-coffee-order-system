@@ -7,8 +7,6 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-import java.util.Objects;
-
 /**
  * 주문 가능한 커피 메뉴를 표현하는 영속 엔티티이다.
  */
@@ -39,8 +37,7 @@ public class Menu {
      * @param price 메뉴 가격
      */
     public Menu(String name, long price) {
-        this.name = Objects.requireNonNull(name, "메뉴 이름은 필수입니다.");
-        validatePrice(price);
+        this.name = name;
         this.price = price;
     }
 
@@ -71,15 +68,4 @@ public class Menu {
         return price;
     }
 
-    /**
-     * 메뉴 가격이 양수인지 검증한다.
-     *
-     * @param price 검증할 메뉴 가격
-     * @throws IllegalArgumentException 메뉴 가격이 양수가 아닌 경우
-     */
-    private static void validatePrice(long price) {
-        if (price <= 0) {
-            throw new IllegalArgumentException("메뉴 가격은 양수여야 합니다.");
-        }
-    }
 }
