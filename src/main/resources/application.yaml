@@ -1,3 +1,5 @@
 spring:
   application:
     name: nbc-coffee-order-system
+#  profiles:
+#    active: local
