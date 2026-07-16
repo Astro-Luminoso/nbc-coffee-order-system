@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
@@ -48,6 +49,7 @@ class IdempotencyServiceIntegrationTest {
      */
     @Test
     void reusesStoredCompletedResultForSameKeyAndRequest() {
+        idempotencyService.reservePointCharge("charge-key-1", 1L, 10_000L);
         PreparedPointCharge first = inTransaction(() -> {
             PreparedPointCharge prepared = idempotencyService.preparePointCharge("charge-key-1", 1L, 10_000L);
             idempotencyService.completePointCharge(prepared, 200, "{\"httpStatus\":200,\"data\":{\"balance\":10000}}");
@@ -69,6 +71,7 @@ class IdempotencyServiceIntegrationTest {
      */
     @Test
     void rejectsReusingKeyForDifferentCanonicalRequest() {
+        idempotencyService.reservePointCharge("charge-key-2", 1L, 10_000L);
         inTransaction(() -> {
             PreparedPointCharge prepared = idempotencyService.preparePointCharge("charge-key-2", 1L, 10_000L);
             idempotencyService.completePointCharge(prepared, 200, "{\"httpStatus\":200}");
@@ -85,6 +88,7 @@ class IdempotencyServiceIntegrationTest {
      */
     @Test
     void storesLowercaseSha256AndRetainsCompletedResultForAtLeastTwentyFourHours() {
+        idempotencyService.reservePointCharge("charge-key-3", 7L, 1_500L);
         inTransaction(() -> {
             PreparedPointCharge prepared = idempotencyService.preparePointCharge("charge-key-3", 7L, 1_500L);
             idempotencyService.completePointCharge(prepared, 200, "{\"httpStatus\":200}");
@@ -151,8 +155,14 @@ class IdempotencyServiceIntegrationTest {
      * @return 트랜잭션 안에서 실행할 작업
      */
     private Callable<PreparedPointCharge> competingCharge(CyclicBarrier startBarrier) {
-        return () -> inTransaction(() -> {
+        return () -> {
             startBarrier.await(5, TimeUnit.SECONDS);
+            try {
+                idempotencyService.reservePointCharge("concurrent-charge-key", 1L, 10_000L);
+            } catch (DataIntegrityViolationException ignored) {
+                // 다른 작업이 같은 키를 먼저 예약했으므로 완료 결과를 잠금 조회한다.
+            }
+            return inTransaction(() -> {
             PreparedPointCharge prepared = idempotencyService.preparePointCharge("concurrent-charge-key", 1L, 10_000L);
             if (!prepared.completed()) {
                 idempotencyService.completePointCharge(
@@ -162,7 +172,8 @@ class IdempotencyServiceIntegrationTest {
                 );
             }
             return prepared;
-        });
+            });
+        };
     }
 
     /**
