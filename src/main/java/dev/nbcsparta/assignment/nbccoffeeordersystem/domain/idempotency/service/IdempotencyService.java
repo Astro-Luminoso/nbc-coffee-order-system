@@ -141,14 +141,14 @@ public class IdempotencyService {
     }
 
     /**
-     * 포인트 충전 요청을 불변 순서로 정규화한다.
+     * 포인트 충전 요청을 불변 필드 순서의 JSON으로 정규화한다.
      *
      * @param userId 충전 대상 사용자 식별자
      * @param amount 충전 금액
-     * @return 정규 요청 문자열
+     * @return 정규 요청 JSON
      */
     private String canonicalPointChargeRequest(long userId, long amount) {
-        return "userId=" + userId + "&amount=" + amount;
+        return "{\"userId\":" + userId + ",\"amount\":" + amount + "}";
     }
 
     /**

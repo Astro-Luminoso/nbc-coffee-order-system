@@ -5,11 +5,12 @@ import jakarta.persistence.EmbeddedId;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * 분산 인스턴스 사이에서 재시도를 안전하게 만드는 영속 멱등성 레코드이다.
@@ -23,8 +24,8 @@ public class IdempotencyRecord {
     @EmbeddedId
     private IdempotencyRecordId id;
 
-    @Lob
-    @Column(name = "request_body", nullable = false)
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "request_body", nullable = false, columnDefinition = "JSON")
     private String requestBody;
 
     @Column(name = "request_hash", nullable = false, length = 64)
@@ -41,8 +42,8 @@ public class IdempotencyRecord {
     @Column(name = "http_status")
     private Integer httpStatus;
 
-    @Lob
-    @Column(name = "response_body")
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "response_body", columnDefinition = "JSON")
     private String responseBody;
 
     @Column(name = "created_at", nullable = false)
@@ -64,7 +65,7 @@ public class IdempotencyRecord {
      * 대기 상태의 포인트 충전 멱등성 레코드를 생성한다.
      *
      * @param id 작업-키 복합 식별자
-     * @param requestBody 불변 정규 요청 문자열
+     * @param requestBody 불변 정규 요청 JSON
      * @param requestHash 정규 요청의 SHA-256 해시
      * @param createdAt 생성 시각
      * @param expiresAt 대기 상태 만료 시각
@@ -137,9 +138,9 @@ public class IdempotencyRecord {
     }
 
     /**
-     * 정규 요청 문자열을 반환한다.
+     * 정규 요청 JSON을 반환한다.
      *
-     * @return 정규 요청 문자열
+     * @return 정규 요청 JSON
      */
     public String getRequestBody() {
         return requestBody;
