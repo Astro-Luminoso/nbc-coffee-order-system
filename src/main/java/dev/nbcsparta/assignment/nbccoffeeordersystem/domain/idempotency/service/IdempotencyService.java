@@ -68,6 +68,23 @@ public class IdempotencyService {
     }
 
     /**
+     * 포인트 충전 멱등성 레코드가 이미 예약되었는지 확인한다.
+     *
+     * <p>동일 키의 삽입 경쟁으로 보이는 예외가 발생한 뒤, 실제로 다른 요청이
+     * 레코드를 먼저 커밋했는지 확인하는 용도로 사용한다.</p>
+     *
+     * @param idempotencyKey 확인할 클라이언트 멱등성 키
+     * @return 포인트 충전 멱등성 레코드가 존재하면 {@code true}
+     */
+    @Transactional(readOnly = true, propagation = Propagation.REQUIRES_NEW)
+    public boolean existsPointCharge(String idempotencyKey) {
+        return idempotencyRecordRepository.existsById(new IdempotencyRecordId(
+                IdempotencyOperation.POINT_CHARGE,
+                idempotencyKey
+        ));
+    }
+
+    /**
      * 예약된 포인트 충전 레코드를 잠근 뒤 새 실행 또는 저장된 완료 결과를 반환한다.
      *
      * @param idempotencyKey 클라이언트 멱등성 키
