@@ -2,6 +2,7 @@ package dev.nbcsparta.assignment.nbccoffeeordersystem.domain.menu.service;
 
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.menu.entity.Menu;
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.menu.repository.MenuRepository;
+import dev.nbcsparta.assignment.nbccoffeeordersystem.global.exception.MenuNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,6 +23,19 @@ public class MenuService {
      */
     public MenuService(MenuRepository menuRepository) {
         this.menuRepository = menuRepository;
+    }
+
+    /**
+     * 메뉴를 읽기 전용으로 조회한다.
+     *
+     * @param menuId 조회할 메뉴 식별자
+     * @return 조회된 메뉴
+     * @throws MenuNotFoundException 메뉴가 존재하지 않는 경우
+     */
+    @Transactional(readOnly = true)
+    public Menu getMenu(long menuId) {
+        return menuRepository.findById(menuId)
+                .orElseThrow(() -> new MenuNotFoundException(menuId));
     }
 
     /**
