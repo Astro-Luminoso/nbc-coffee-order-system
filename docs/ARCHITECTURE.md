@@ -1,105 +1,125 @@
 # API Architecture
 
-## Overview
+## 1. Overview
 
-This API uses a three-layer architecture. Each domain feature owns its controller, service, repository, entity, and DTO packages so that related code stays together.
+The application uses a simple layered architecture. Controllers handle HTTP
+concerns, application services coordinate use cases and transaction boundaries,
+repositories access MySQL, and an infrastructure client sends committed order
+data to the external collection platform.
 
 ```text
 Client
-  -> Controller layer
-  -> Service layer
-  -> Repository layer
-  -> Database or external persistence store
+  -> Controller
+  -> Application Service
+  -> Repository / Data Collection Client
+  -> MySQL / External Platform
 ```
 
-Dependencies must flow only in this direction. A repository must not depend on a service or controller, and an entity must not depend on controller, service, or repository code.
+Dependencies flow inward from HTTP and infrastructure adapters to application
+services and domain models. Controllers do not access repositories directly.
 
-## Package Hierarchy
-
-All domain code is organized feature-first under the application's base package:
+## 2. Package Structure
 
 ```text
 dev.nbcsparta.assignment.nbccoffeeordersystem
 ├── domain
 │   ├── menu
-│   │   ├── controller
-│   │   ├── service
-│   │   ├── repository
-│   │   ├── entity
-│   │   └── dto
+│   ├── user
+│   ├── point
 │   ├── order
-│   │   ├── controller
-│   │   ├── service
-│   │   ├── repository
-│   │   ├── entity
-│   │   └── dto
-│   └── user
-│       ├── controller
-│       ├── service
-│       ├── repository
-│       ├── entity
-│       └── dto
+│   └── idempotency
+├── infrastructure
+│   └── collector
 └── global
     ├── config
     ├── exception
     └── response
 ```
 
-`global` contains cross-cutting technical concerns only. Domain-specific code must remain in its domain package.
+Each domain package may contain its controller, DTOs, entity, repository, and
+service when those types are needed. Package structure must support the use
+case; it must not force artificial facades or one-repository service classes.
 
-## Layer Responsibilities
+## 3. Application Services
 
-### Controller
+### `MenuService`
 
-- Defines HTTP endpoints and handles request validation and HTTP-specific concerns.
-- Converts requests to DTOs and returns the standard API response.
-- Delegates business work to a service or facade.
-- Does not access repositories or implement business rules.
+Reads the menu catalog and returns menu-facing response data.
 
-### Service
+### `PointChargeService`
 
-- Implements business rules for one domain responsibility.
-- Uses exactly one directly related repository. For example, `MenuService` uses `MenuRepository` and `UserService` uses `UserRepository`.
-- Owns transaction boundaries for its domain operation when the operation is not coordinated by a facade.
-- Does not depend on controllers or unrelated repositories.
+Owns the point-charge transaction. It verifies the idempotency record, applies
+an atomic point increment, and stores the completed idempotency response in the
+same transaction.
 
-### Repository
+### `OrderPaymentService`
 
-- Encapsulates persistence access for its related entity or aggregate.
-- Is called only by its owning service.
-- Contains persistence queries, not business orchestration.
+Owns the order-payment transaction. It may use user, menu, order, and
+idempotency repositories because they participate in one atomic use case.
 
-### Entity
+The service performs these steps:
 
-- Represents the persisted domain model and its intrinsic state and behavior.
-- Is not returned directly from an API endpoint.
+1. Acquire or read the shared idempotency record.
+2. Return the stored response for a completed matching request.
+3. Read the menu price.
+4. Deduct points using an atomic conditional database update.
+5. Create one paid order with the captured payment amount.
+6. Store the completed idempotency response.
+7. Publish an order-completed event only after the transaction commits.
 
-### DTO
+### `PopularMenuService`
 
-- Defines request and response data at the API boundary.
-- Is separate from entities so persistence details are not exposed to clients.
-- Follows the DTO and response rules in [docs/CONVENTION.md](docs/CONVENTION.md).
+Reads and combines daily Redis ZSETs for the seven completed `Asia/Seoul`
+calendar dates immediately before the current date. It excludes the current
+date, orders the combined scores by count descending and menu ID ascending, and
+returns at most three menus.
 
-## Repository Ownership and Facades
+MySQL remains the source of truth. When Redis is unavailable or a daily cache
+key is missing or invalid, the service aggregates `coffee_order` rows for the
+affected dates and rebuilds the ZSET projection before returning the result.
 
-A domain service must not inject or call more than one repository. If a use case needs data or mutations from multiple repositories, introduce a facade in the relevant domain's `service` package.
+### `PopularMenuCacheUpdater`
 
-The facade coordinates the required single-repository services. It does not access repositories directly and does not duplicate their domain rules. The controller calls the facade for the cross-domain use case.
+Receives a committed order event and increments the order's menu member in the
+corresponding daily Redis ZSET. It uses one Redis script to atomically create a
+`SETNX` projection marker for the order ID and execute `ZINCRBY`; retried events
+therefore cannot increment the same order twice. It must not update Redis for an
+order whose database transaction rolls back.
+
+## 4. Concurrency and Idempotency
+
+The database coordinates requests from all application instances.
+
+- Point charges use an atomic increment update.
+- Payments use a conditional decrement update that succeeds only when the
+  balance covers the menu price.
+- The unique `(operation, idempotency_key)` constraint serializes duplicate
+  mutations across instances.
+- A matching completed idempotency record replays the stored response.
+- A reused key with a different request hash is rejected.
+- A committed order is projected to one daily Redis ZSET member exactly once.
+
+Idempotency prevents repeated requests from duplicating a side effect. The
+atomic point update prevents different concurrent requests from losing updates
+or overspending a balance. Both mechanisms are required.
+
+Redis improves popular-menu read throughput but does not replace MySQL order
+data. Cache recovery aggregates MySQL orders and restores the Redis projection.
+
+## 5. Data Collection
+
+`OrderPaymentService` publishes an event after a payment transaction commits.
+`DataCollectionClient` receives that event and sends the required payload to a
+configured Mock API or test double.
 
 ```text
-OrderController
-  -> OrderFacade
-      -> UserService  -> UserRepository
-      -> MenuService  -> MenuRepository
-      -> OrderService -> OrderRepository
+Order payment transaction commits
+  -> OrderCompletedEvent
+  -> DataCollectionClient
+  -> Data collection platform
 ```
 
-For example, creating an order may require validating a menu, deducting user points, and saving an order. `OrderFacade` coordinates those operations, while `MenuService`, `UserService`, and `OrderService` each retain ownership of exactly one related repository.
-
-## Implementation Rules
-
-- Prefer one service per domain responsibility and one repository per service.
-- Name a facade after the coordinated use case, such as `OrderFacade` or `OrderPlacementFacade`.
-- Keep facade methods focused on application-level orchestration.
-- Keep request/response DTOs in the owning domain's `dto` package; request and response subpackages may be added when the domain grows.
-- Do not bypass the service layer by injecting a repository into a controller or facade.
+The baseline implementation does not roll back a committed payment when the
+external call fails. It records the failure in Korean operational logs. A
+transactional outbox is a future extension for systems that require guaranteed
+external delivery.
