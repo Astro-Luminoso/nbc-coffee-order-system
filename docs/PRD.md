@@ -1,171 +1,116 @@
 # Coffee Order System Product Requirements Document
 
-## 1. Project Goal (Assignment)
+## 1. Project Goal
 
-The goal of this assignment is to build a reliable backend for a coffee ordering service.
-A user must be able to browse coffee menus, charge points, order and pay for a coffee with those points,
-and view the three most popular menus from the seven completed calendar dates immediately before the current date.
+Build a reliable backend for a coffee ordering service. A user must be able to
+list coffee menus, charge points, order and pay for one coffee, and view the
+three most popular menus from the last seven days.
 
-The solution must demonstrate more than basic API behavior.
-It must remain correct when multiple application instances are running, protect point balances and order counts from concurrency issues,
-preserve data consistency, and include tests for every feature and constraint.
+The application must remain correct when requests are handled by multiple
+application instances. Point balances and paid-order counts must be accurate
+under concurrent traffic.
 
-### Success Criteria
+## 2. Scope
 
-- All mandatory features and their supporting order-attempt endpoint are implemented and behave according to this document.
-- One Korean won is converted to one point (`1 KRW = 1 point`).
-- Coffee purchases can be paid for only with points.
-- Creating an order and deducting its payment amount are processed consistently.
-- Every successfully paid order is sent to a data collection platform in near real time.
-- The top three menus are calculated from exact paid-order counts for the seven completed calendar dates immediately before the current date in the `Asia/Seoul` business timezone. The current date is excluded.
-- The application works correctly when multiple server instances run at the same time.
-- Automated tests cover features, business rules, concurrency, and consistency constraints.
-- The project `README.md` documents the ERD, API specification, design intent, problem-solving strategy and analysis, and reasons for technical choices.
+The public API contains the following four features:
 
-## 2. User Scenarios
+1. List coffee menus.
+2. Charge user points.
+3. Order and pay for one coffee menu.
+4. List the top three popular menus from the last seven days.
 
-### Scenario 1: Browse Coffee Menus
+Authentication and authorization are outside the scope of this assignment.
+Each order contains exactly one menu because the order request accepts one
+`menuId`. Cart, quantity, discount, refund, and inventory features are also
+outside the scope.
 
-1. A user requests the coffee menu list.
-2. The system returns each menu's ID, name, and price.
-3. The user selects a menu to order.
+## 3. Functional Requirements
 
-### Scenario 2: Charge Points
+### F-01. List Coffee Menus
 
-1. A user submits a user identifier and a positive charge amount.
-2. The system converts the amount at `1 KRW = 1 point` and adds it to the user's point balance.
-3. The system returns the updated point balance.
-4. Concurrent charges must not cause any point update to be lost.
+- Return every menu with its ID, name, and price.
+- Return an empty list when no menus are available.
 
-### Scenario 3: Order and Pay for Coffee
+### F-02. Charge Points
 
-1. A user submits a user identifier and menu ID to create an order attempt.
-2. The system stores the immutable request and returns a server-generated order-attempt identifier with `PENDING` status.
-3. The client retains that identifier and submits it when the user confirms the purchase.
-4. The system locks the attempt, verifies the menu and current price, and verifies that the user has enough points.
-5. The system deducts the menu price, creates a paid order with one order item, creates a durable delivery task, and completes the attempt as one consistent business operation.
-6. If the balance is insufficient or the transaction fails, the system leaves the attempt pending and does not deduct points or create a paid order.
-7. Repeating confirmation of the completed attempt returns the original response without another deduction or order.
-8. The system sends the user identifier, menu ID, and payment amount to a data collection platform in near real time.
+- Accept a user identifier and a positive charge amount.
+- Convert one Korean won to one point (`1 KRW = 1 point`).
+- Return the balance after the successful charge.
+- Require an `Idempotency-Key` header. Repeating the same request with the
+  same key must return the original result without charging points again.
 
-### Scenario 4: View Popular Menus
+### F-03. Order and Pay for Coffee
 
-1. A user requests the popular-menu list.
-2. The system counts successfully paid orders for each menu from the seven completed calendar dates immediately before the current date.
-3. The system returns up to three menus ordered by order count from highest to lowest.
-4. The result must remain accurate across multiple application instances and concurrent orders.
+- Accept a user identifier and one menu identifier in a single request.
+- Require an `Idempotency-Key` header.
+- Use points as the only payment method.
+- Deduct the current menu price and create one paid order in the same database
+  transaction.
+- Reject the request when the user has insufficient points. A rejection must
+  not change the balance or create an order.
+- Preserve the paid amount in the order so later menu-price changes do not
+  change payment history.
+- After a successful transaction commits, send `userId`, `menuId`, and
+  `paymentAmount` to the configured data collection platform.
 
-## 3. Tech Stack
+### F-04. List Popular Menus
 
-The dependency versions and libraries in `build.gradle` are the source of truth for the application stack.
+- Return at most three menus ordered by paid-order count from the last seven
+  days.
+- Use one Redis ZSET for each calendar date in the `Asia/Seoul` timezone to
+  cache menu order counts.
+- Count the seven completed calendar dates immediately before the current date.
+  The current date is excluded.
+- Break equal counts by menu ID in ascending order.
+- Keep MySQL paid orders as the source of truth. Rebuild a missing or invalid
+  Redis cache from MySQL aggregation before returning a popularity result.
 
-| Area                  | Technology                                   | Purpose                                              |
-|-----------------------|----------------------------------------------|------------------------------------------------------|
-| Language              | Java 21                                      | Application implementation                           |
-| Build                 | Gradle Wrapper                               | Reproducible builds and test execution               |
-| Framework             | Spring Boot 4.1.0                            | Application configuration and runtime                |
-| API                   | Spring Web MVC                               | HTTP API implementation                              |
-| Validation            | Spring Validation                            | Request and business-input validation                |
-| Persistence           | Spring Data JPA                              | Relational data access                               |
-| Primary database      | MySQL 8.4                                    | Users, menus, orders, and order items                |
-| Cache                 | Spring Data Redis / Redis 7.4 Alpine         | Search-result caching and popular-menu data          |
-| Operations            | Spring Boot Actuator                         | Health and operational endpoints                     |
-| Development database  | H2                                           | Lightweight development or test support              |
-| Testing               | JUnit Platform and Spring Boot test starters | Unit, integration, concurrency, and constraint tests |
-| Boilerplate reduction | Lombok                                       | Java model and component boilerplate reduction       |
-| Local infrastructure  | Docker                                       | Local Redis container                                |
+## 4. Consistency and Concurrency Requirements
 
-The application must not depend on in-memory state for correctness. Shared MySQL and Redis infrastructure must support multiple application instances.
+- The application must not depend on process-local state for correctness.
+- Idempotency records must be stored in shared durable storage so retries are
+  safe across instances and process restarts.
+- A user's point balance must never be negative.
+- Point changes must use an atomic database update. Payment deduction must
+  include a sufficient-balance condition.
+- Point deduction, order creation, and completion of the corresponding
+  idempotency record must commit or roll back together.
+- A unique idempotency record prevents concurrent duplicate requests with the
+  same operation and key from creating duplicate side effects.
+- A committed order must increment its daily Redis ZSET score exactly once.
+- Popular-menu cache recovery must aggregate committed MySQL orders, so Redis
+  loss does not change the authoritative order counts.
 
-## 4. Domain Model
+## 5. Data Collection Boundary
 
-### Core Models
+The data collection platform is an external system. The application invokes a
+configured client after a successful payment transaction commits. The payload
+contains the user identifier, menu identifier, and payment amount.
 
-| Model             | Key Attributes                                                   | Responsibilities and Constraints                                                                                                                             |
-|-------------------|------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| User              | `id`, `balance`                                                  | Identifies the customer, stores the current point balance, and places orders. The balance must never be negative, and concurrent updates must be controlled. |
-| Menu              | `id`, `name`, `price`                                            | Represents a coffee available for ordering. The price must be positive.                                                                                      |
-| Order             | `id`, `userId`, `totalAmount`, `orderedAt`                       | Represents a completed POS sale. An order is persisted only after point payment succeeds and contains one or more order items.                               |
-| Order Item        | `id`, `orderId`, `menuId`, `quantity`, `unitPrice`, `lineAmount` | Represents a purchased menu line and preserves its price at payment time. The current API creates exactly one item with quantity `1`.                        |
-| Popular Menu View | Daily ZSET key, `menuId` member, paid-order-count score, key TTL | Redis-derived cache for ranking menus. The API calculates exact rankings from MySQL paid order items, and the cache remains rebuildable from those items.    |
+A delivery failure is logged and does not roll back an already committed
+payment. Guaranteed delivery and retry orchestration through a transactional
+outbox are intentionally outside the baseline scope; they can be introduced
+later if the external platform requires delivery guarantees.
 
-### Popular Menu View Storage Model
+The popular-menu Redis cache is a separate read-side concern. It is updated
+only after a payment commits and is rebuilt from MySQL when it is unavailable,
+lost, or detected as invalid.
 
-The popular-menu view is stored as one Redis ZSET for each calendar date in the `Asia/Seoul` business timezone.
+## 6. Acceptance Criteria
 
-| Redis Element | Format                      | Meaning                                                              |
-|---------------|-----------------------------|----------------------------------------------------------------------|
-| Key           | `popular-menu:{yyyy-MM-dd}` | Daily popularity bucket, such as `popular-menu:2026-07-10`           |
-| Type          | ZSET                        | Maintains members ordered by their numeric scores                    |
-| Member        | `menuId`                    | Stable menu identifier; menu names and prices remain in MySQL        |
-| Score         | Paid order count            | Number of successfully paid orders for the menu on that date         |
-| TTL           | Daily ZSET key expiration   | Removes the entire expired daily bucket after it is no longer needed |
-
-For example, after the application aggregates the authoritative MySQL data for one date, it may refresh that date's cached score for menu `1`:
-
-```redis
-ZADD popular-menu:2026-07-10 42 menu:1
-```
-
-The top-three query aggregates the seven completed calendar-date buckets immediately before the current date from MySQL, sums counts by `menuId`, and returns the three members with the highest combined scores. The current date's ZSET is not included. Redis caches may be refreshed from the same aggregation but must not decide the API result. The API resolves each member's menu name and other display information from the MySQL `Menu` data.
-
-TTL applies to each daily ZSET key, not to individual ZSET members. Each bucket must expire at a fixed time after the seven-day query window so that it cannot disappear while still participating in a valid ranking query.
-
-### Relationships
-
-- A user stores one current point balance.
-- A user can place many orders.
-- An order contains one or more order items. The current API creates exactly one order item per order.
-- A menu can be referenced by many order items.
-- The popular-menu view is a Redis cache derived from MySQL paid order items grouped by date and menu.
-- A daily ZSET contains many menus, and the same menu may appear in each date bucket in which it was ordered.
-
-### Business Rules
-
-- Points are the only supported payment method.
-- A charge amount and menu price must be positive.
-- A user's point balance must never fall below zero.
-- An order item's quantity, unit price, and line amount must be positive.
-- An order item's line amount equals its unit price multiplied by its quantity.
-- An order's total amount equals the sum of its order-item line amounts.
-- The current API accepts one `menuId`, so it creates one order item with quantity `1`.
-- Point deduction, order creation, and order-item creation must be atomic from the user's perspective.
-- Only successfully paid orders are persisted.
-- Concurrent charges and payments must not lose updates or allow overspending.
-- A point-charge retry with the same client-generated idempotency key and request must return the original response without charging again.
-- The server generates an order-attempt identifier before confirmation and stores the immutable `userId` and `menuId` request with `PENDING` status.
-- A client retains the order-attempt identifier until the order completes or the attempt expires; confirmation does not accept mutable order data.
-- Concurrent or repeated confirmations of one order attempt create at most one paid order. A completed confirmation returns its original response.
-- A failed confirmation leaves the attempt `PENDING` and causes no point, order, item, or outbox side effect.
-- The application sends the user ID, menu ID, and payment amount from the completed order to the data collection platform in near real time. This transmission is application behavior and does not add another core domain entity.
-- Every committed order creates one durable outbox task that references the order. A worker reconstructs the payload from immutable order data and retries delivery at least once until acknowledged, providing eventual delivery when the platform becomes available.
-- A delivery failure after the order transaction commits does not roll back the order or change its `201 Created` response. The collector deduplicates retries by `orderId`.
-- Popularity uses only successfully paid orders from the seven completed calendar dates immediately before the current date in the `Asia/Seoul` business timezone.
-- A successful payment is persisted in MySQL before it can contribute to popularity. Redis cache writes do not determine the result returned by the popular-menu API.
-- MySQL paid orders and order items are the source of truth. Every popular-menu response aggregates that source for its query window, and daily ZSETs may be rebuilt from the same aggregation when Redis data is lost or inconsistent.
-- Popular-menu counts must be consistent across all running application instances.
-- When order counts are tied, a deterministic secondary ordering must be defined in the API specification.
-
-## 5. Feature List
-
-### Mandatory Features
-
-| ID   | Feature                       | Requirements                                                                                                              | Acceptance Criteria                                                                                                                                                                                                                                                                                                                                                     |
-|------|-------------------------------|---------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| F-01 | Coffee menu list              | Provide coffee menu ID, name, and price.                                                                                  | A request returns all available menus with the required fields.                                                                                                                                                                                                                                                                                                         |
-| F-02 | Point charge                  | Accept a user identifier and charge amount; apply `1 KRW = 1 point`.                                                      | A valid charge increases the correct user's balance exactly once and returns the resulting balance.                                                                                                                                                                                                                                                                     |
-| F-03 | Coffee order and payment      | Create a server-managed order attempt from a user identifier and menu ID, then confirm it and pay only with points.       | A successful confirmation returns `201 Created` only after atomically deducting the exact menu price, creating one order item of quantity `1`, creating its outbox task, and completing the attempt. Retrying the completed attempt returns the original response. An invalid menu, insufficient balance, or rolled-back transaction creates no paid-order side effect. |
-| F-04 | Real-time order data delivery | Send the user identifier, menu ID, and payment amount to a data collection platform.                                      | Each successfully paid order creates one durable task. Delivery is at least once and retried until acknowledged; the collector deduplicates by `orderId`. A post-commit delivery failure does not change the order response or roll back persisted order data.                                                                                                          |
-| F-05 | Popular menu list             | Return the three most ordered menus across the seven completed calendar-date buckets immediately before the current date. | The response excludes the current date, aggregates the preceding seven calendar dates from MySQL, and contains at most three menus based on exact paid-order counts. Redis caching does not change the result.                                                                                                                                                          |
-
-### Quality and Delivery Features
-
-| ID   | Feature                  | Requirements                                                                                                                  | Acceptance Criteria                                                                                                                                                                                                                                                                                                              |
-|------|--------------------------|-------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Q-01 | Multi-instance operation | Avoid correctness dependencies on a single application process.                                                               | The mandatory features behave correctly when requests are distributed across multiple instances.                                                                                                                                                                                                                                 |
-| Q-02 | Concurrency control      | Protect point balances, orders, and popularity counts under concurrent requests.                                              | Concurrency tests prove that balances cannot overspend, updates are not lost, and counts remain correct.                                                                                                                                                                                                                         |
-| Q-03 | Data consistency         | Define transaction boundaries, idempotent retry behavior, and external-data delivery behavior.                                | Tests prove that pre-commit failures leave no paid-order side effects, post-commit delivery failures preserve the order and `201` response, repeated confirmation does not duplicate payment or order data, and delivery retries are safe by `orderId`.                                                                          |
-| Q-04 | Automated testing        | Test all features and constraints.                                                                                            | Unit and integration tests cover normal cases, validation errors, insufficient points, point-charge key reuse, pending and completed order attempts, concurrent confirmation and response replay, daily-bucket aggregation and TTL boundaries, post-commit delivery failures, retries, and collector deduplication by `orderId`. |
-| Q-05 | Design documentation     | Provide the ERD, API specification, design intent, analyzed solution strategy, and technical-choice rationale in `README.md`. | Reviewers can trace each implementation decision back to an explicit requirement and design reason.                                                                                                                                                                                                                              |
-
-HTTP methods, error-response formats, and application-specific error codes may be selected during API design, but they must be consistent and documented.
+- Menu listing returns menu ID, name, and price.
+- A valid point charge increases the correct balance exactly once.
+- A repeated point charge with the same idempotency key does not charge twice.
+- A valid payment creates one order and deducts the exact menu price.
+- A repeated payment with the same idempotency key returns the original order
+  result without creating another order or deducting points again.
+- Insufficient points create no order and leave the balance unchanged.
+- Concurrent point operations do not lose updates or allow overspending.
+- Popular-menu results contain exact counts for the seven completed calendar
+  dates immediately before the current date, and contain at most three menus.
+- Redis cache loss or invalidation rebuilds the affected popularity data from
+  MySQL without changing returned counts.
+- A successful payment invokes the data collection client after commit.
+- Automated tests cover normal cases, validation failures, idempotent retries,
+  concurrent point operations, payment consistency, popularity aggregation,
+  and data-collection invocation.
