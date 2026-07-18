@@ -11,7 +11,9 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
+import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,17 +24,54 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class IdempotencyService {
 
-    private static final Duration PENDING_RETENTION = Duration.ofHours(24);
+    private static final Duration POINT_CHARGE_PENDING_RETENTION = Duration.ofHours(24);
 
     private final IdempotencyRecordRepository idempotencyRecordRepository;
+    private final Duration orderAttemptTtl;
 
     /**
      * 멱등성 레코드 저장소를 사용하는 서비스를 생성한다.
      *
      * @param idempotencyRecordRepository 멱등성 레코드 저장소
+     * @param orderAttemptTtl 주문 시도의 대기 상태 유지 시간
      */
-    public IdempotencyService(IdempotencyRecordRepository idempotencyRecordRepository) {
+    public IdempotencyService(
+            IdempotencyRecordRepository idempotencyRecordRepository,
+            @Value("${order-attempt.ttl:PT30M}") Duration orderAttemptTtl
+    ) {
         this.idempotencyRecordRepository = idempotencyRecordRepository;
+        if (orderAttemptTtl.isZero() || orderAttemptTtl.isNegative()) {
+            throw new IllegalArgumentException("주문 시도 유지 시간은 양수여야 합니다.");
+        }
+        this.orderAttemptTtl = orderAttemptTtl;
+    }
+
+    /**
+     * 서버가 발급한 식별자로 대기 상태 주문 시도를 저장한다.
+     *
+     * <p>저장되는 정규 요청은 사용자와 메뉴 식별자만 포함하며, 생성 이후 변경되지 않는다.
+     * 이 단계에서는 포인트, 주문, 주문 항목 또는 배달 작업을 만들지 않는다.</p>
+     *
+     * @param userId 주문과 결제를 수행할 사용자 식별자
+     * @param menuId 주문할 메뉴 식별자
+     * @return 서버가 발급한 주문 시도 식별자와 만료 시각
+     */
+    @Transactional
+    public CreatedOrderAttempt createOrderAttempt(long userId, long menuId) {
+        String orderAttemptId = UUID.randomUUID().toString();
+        String canonicalRequest = canonicalOrderAttemptRequest(userId, menuId);
+        Instant now = Instant.now();
+        Instant expiresAt = now.plus(orderAttemptTtl);
+
+        idempotencyRecordRepository.save(new IdempotencyRecord(
+                new IdempotencyRecordId(IdempotencyOperation.ORDER_ATTEMPT, orderAttemptId),
+                canonicalRequest,
+                sha256(canonicalRequest),
+                now,
+                expiresAt
+        ));
+
+        return new CreatedOrderAttempt(orderAttemptId, expiresAt);
     }
 
     /**
@@ -63,7 +102,7 @@ public class IdempotencyService {
                 canonicalRequest,
                 sha256(canonicalRequest),
                 now,
-                now.plus(PENDING_RETENTION)
+                now.plus(POINT_CHARGE_PENDING_RETENTION)
         ));
     }
 
@@ -149,6 +188,17 @@ public class IdempotencyService {
      */
     private String canonicalPointChargeRequest(long userId, long amount) {
         return "{\"userId\":" + userId + ",\"amount\":" + amount + "}";
+    }
+
+    /**
+     * 주문 시도 요청을 불변 필드 순서의 JSON으로 정규화한다.
+     *
+     * @param userId 주문과 결제를 수행할 사용자 식별자
+     * @param menuId 주문할 메뉴 식별자
+     * @return 정규 요청 JSON
+     */
+    private String canonicalOrderAttemptRequest(long userId, long menuId) {
+        return "{\"userId\":" + userId + ",\"menuId\":" + menuId + "}";
     }
 
     /**

@@ -3,3 +3,6 @@ spring:
     name: nbc-coffee-order-system
 #  profiles:
 #    active: local
+
+order-attempt:
+  ttl: PT30M
