@@ -95,13 +95,13 @@ Indexes:
 
 An order is created with `collection_status = PENDING` in the same transaction
 as payment. A delivery transaction obtains the still-`PENDING` row through a
-pessimistic database lock before calling the collection platform. A successful
-call changes it to `SUCCEEDED`; a failed call leaves it `PENDING`, and the
-retry scheduler attempts it again on its next run. The lock prevents normal
-concurrent instances from calling the platform for the same order at once, but
-delivery remains at-least-once because an accepted external call and the
-database commit cannot be made atomic. The collection platform must therefore
-deduplicate by order ID.
+pessimistic database lock before calling MockAPI.io. The client first looks up
+the external `orders` resource by the local order ID. One identical record or a
+successful create changes the local status to `SUCCEEDED`; a failed call or
+conflict leaves it `PENDING`, and the retry scheduler attempts it again on its
+next run. The MockAPI.io-generated resource `id` is not persisted because the
+local `coffee_order.id` is the reconciliation key. No relational schema change
+is required for the external integration.
 
 `popularity_projection_status` is initialized to `PENDING` in the payment
 transaction. After the committed order is applied to the Redis ZSET, it moves
@@ -143,11 +143,12 @@ response without applying a second side effect.
 - A successfully paid order is created with a durable pending collection
   delivery state in that same transaction.
 - A delivery attempt pessimistically locks the still-pending order row before
-  it calls the external platform. A failed delivery remains pending; retries
-  use the order ID as their external idempotency identifier.
-- Collection delivery is at-least-once because the external-call result and
-  the local `SUCCEEDED` commit are not one atomic operation. The receiver
-  deduplicates by order ID.
+  it calls MockAPI.io. A failed delivery remains pending; every retry uses the
+  local order ID to look up an existing external record before creating one.
+- The external-call result and the local `SUCCEEDED` commit are not one atomic
+  operation. Lookup-before-create reconciles application-owned retries, while
+  manual or unrelated external writes remain outside the relational
+  consistency boundary.
 - A paid order starts with `popularity_projection_status = PENDING`. Only a
   successful Redis projection changes it to `SUCCEEDED`; failed projections are
   retried.

@@ -84,9 +84,36 @@ and field errors when validation fails.
 | `IdempotencyKeyReusedException` | `409 Conflict` | `IDEMPOTENCY_KEY_REUSED` |
 | `InternalServerErrorException` | `500 Internal Server Error` | `INTERNAL_SERVER_ERROR` |
 
-## 6. Logging and Code Comments
+## 6. Outbound MockAPI.io Integration
+
+- The MockAPI.io project base URL is supplied by `MOCKAPI_BASE_URL` and must not
+  be committed to the repository. It includes the project API prefix and does
+  not include the `/orders` resource path.
+- External request and response DTOs are separate from public API DTOs and JPA
+  entities.
+- Requests send and accept `application/json`. MockAPI.io responses do not use
+  the application's `CommonApiResponse<T>` envelope.
+- Every delivery attempt performs `GET /orders?orderId={orderId}` before it may
+  perform `POST /orders`.
+- Exactly one lookup record must match `orderId`, `userId`, `menuId`, and
+  `paymentAmount`. Multiple records or different data for the same `orderId`
+  are external-data conflicts.
+- A response is successful only when the expected `2xx` status and a valid,
+  matching JSON body are both present.
+- Connection timeout, read timeout, transport failure, non-`2xx` response,
+  malformed JSON, and external-data conflict are retryable delivery failures at
+  the application boundary. They leave the order `PENDING`.
+- The HTTP client must not automatically retry `POST`. Persistent retries are
+  coordinated by the order delivery scheduler so that lookup always precedes a
+  repeated create attempt.
+- The default connect and read timeouts are `PT2S` and `PT5S`, respectively,
+  and can be overridden with `MOCKAPI_CONNECT_TIMEOUT` and
+  `MOCKAPI_READ_TIMEOUT`.
+
+## 7. Logging and Code Comments
 
 - Console log messages must be written in Korean.
 - Unexpected failures must include a Korean diagnostic message and stack trace.
-- Logs must not contain credentials, secrets, or sensitive request data.
+- Logs must not contain credentials, secrets, sensitive request data, or the
+  configured MockAPI.io project base URL.
 - Java documentation and code comments must be written in Korean.
