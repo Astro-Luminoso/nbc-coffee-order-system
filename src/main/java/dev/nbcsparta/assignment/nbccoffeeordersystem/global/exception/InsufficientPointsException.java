@@ -7,6 +7,9 @@ import org.springframework.http.HttpStatus;
  */
 public class InsufficientPointsException extends ServiceException {
 
+    /**
+     * 포인트 부족 오류 응답을 위한 예외를 생성한다.
+     */
     public InsufficientPointsException() {
         super("포인트 잔액이 부족합니다.", HttpStatus.CONFLICT);
     }

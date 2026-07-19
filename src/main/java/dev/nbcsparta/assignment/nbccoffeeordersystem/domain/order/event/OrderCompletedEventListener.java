@@ -1,8 +1,6 @@
 package dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.event;
 
-import dev.nbcsparta.assignment.nbccoffeeordersystem.infrastructure.collector.DataCollectionClient;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.service.OrderCollectionDeliveryService;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -13,19 +11,24 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @Component
 public class OrderCompletedEventListener {
 
-    private static final Logger log = LoggerFactory.getLogger(OrderCompletedEventListener.class);
-    private final DataCollectionClient dataCollectionClient;
+    private final OrderCollectionDeliveryService orderCollectionDeliveryService;
 
-    public OrderCompletedEventListener(DataCollectionClient dataCollectionClient) {
-        this.dataCollectionClient = dataCollectionClient;
+    /**
+     * 주문 데이터 전송 서비스를 사용하는 이벤트 리스너를 생성한다.
+     *
+     * @param orderCollectionDeliveryService 외부 수집 전송 서비스
+     */
+    public OrderCompletedEventListener(OrderCollectionDeliveryService orderCollectionDeliveryService) {
+        this.orderCollectionDeliveryService = orderCollectionDeliveryService;
     }
 
+    /**
+     * 주문 트랜잭션이 커밋된 뒤 외부 데이터 수집 전송을 즉시 시도한다.
+     *
+     * @param event 커밋된 주문 이벤트
+     */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void collect(OrderCompletedEvent event) {
-        try {
-            dataCollectionClient.collect(event.userId(), event.menuId(), event.paymentAmount());
-        } catch (RuntimeException exception) {
-            log.error("커밋된 주문 데이터 수집 전송에 실패했습니다. 주문={}", event.orderId(), exception);
-        }
+        orderCollectionDeliveryService.deliver(event.orderId());
     }
 }

@@ -18,11 +18,25 @@ public class OrderPaymentFacade {
     private final IdempotencyService idempotencyService;
     private final OrderPaymentService orderPaymentService;
 
+    /**
+     * 주문 결제의 멱등성 예약과 트랜잭션 처리를 조합한다.
+     *
+     * @param idempotencyService 멱등성 상태 서비스
+     * @param orderPaymentService 주문 결제 트랜잭션 서비스
+     */
     public OrderPaymentFacade(IdempotencyService idempotencyService, OrderPaymentService orderPaymentService) {
         this.idempotencyService = idempotencyService;
         this.orderPaymentService = orderPaymentService;
     }
 
+    /**
+     * 멱등성 키를 예약한 뒤 주문 결제를 실행하거나 완료 결과를 재생한다.
+     *
+     * @param idempotencyKey 주문 시도 식별 키
+     * @param userId 결제할 사용자 식별자
+     * @param menuId 주문할 메뉴 식별자
+     * @return 주문 결제 결과
+     */
     public OrderPaymentResponse pay(String idempotencyKey, long userId, long menuId) {
         try {
             idempotencyService.reserveOrderPayment(idempotencyKey, userId, menuId);

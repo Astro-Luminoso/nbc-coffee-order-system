@@ -34,6 +34,16 @@ public class OrderPaymentService {
     private final ApplicationEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
 
+    /**
+     * 주문 결제 트랜잭션에 필요한 도메인 서비스와 저장소를 주입한다.
+     *
+     * @param idempotencyService 멱등성 상태 서비스
+     * @param userService 사용자 포인트 서비스
+     * @param menuService 메뉴 조회 서비스
+     * @param coffeeOrderRepository 주문 저장소
+     * @param eventPublisher 커밋 후 이벤트 발행기
+     * @param objectMapper 완료 응답 직렬화 도구
+     */
     public OrderPaymentService(
             IdempotencyService idempotencyService,
             UserService userService,
@@ -50,6 +60,14 @@ public class OrderPaymentService {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 포인트 차감, 주문 생성, 멱등성 완료를 하나의 트랜잭션으로 처리한다.
+     *
+     * @param idempotencyKey 주문 시도 식별 키
+     * @param userId 결제할 사용자 식별자
+     * @param menuId 주문할 메뉴 식별자
+     * @return 주문 결제 결과
+     */
     @Transactional
     public OrderPaymentResponse pay(String idempotencyKey, long userId, long menuId) {
         PreparedOrderPayment prepared = idempotencyService.prepareOrderPayment(idempotencyKey, userId, menuId);

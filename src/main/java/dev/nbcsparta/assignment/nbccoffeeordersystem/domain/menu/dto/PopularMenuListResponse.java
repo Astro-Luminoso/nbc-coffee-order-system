@@ -12,7 +12,19 @@ public record PopularMenuListResponse(
         LocalDate periodEndDate,
         List<PopularMenuResponse> menus
 ) {
+
+    /**
+     * 인기 메뉴 한 건의 응답 정보다.
+     */
     public record PopularMenuResponse(Long menuId, String name, Long price, Long orderCount) {
+
+        /**
+         * 메뉴와 주문 횟수로 인기 메뉴 응답을 생성한다.
+         *
+         * @param menu 메뉴 엔티티
+         * @param orderCount 집계된 주문 횟수
+         * @return 인기 메뉴 응답
+         */
         public static PopularMenuResponse of(Menu menu, long orderCount) {
             return new PopularMenuResponse(menu.getId(), menu.getName(), menu.getPrice(), orderCount);
         }
