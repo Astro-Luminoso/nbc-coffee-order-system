@@ -18,8 +18,8 @@ public class User {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, columnDefinition = "BIGINT CHECK (balance >= 0)")
-    private long balance;
+    @Column(name = "point_balance", nullable = false, columnDefinition = "BIGINT CHECK (point_balance >= 0)")
+    private long pointBalance;
 
     /**
      * JPA가 엔티티를 생성할 때 사용하는 생성자이다.
@@ -36,7 +36,7 @@ public class User {
         if (balance < 0) {
             throw new IllegalArgumentException("초기 포인트 잔액은 음수일 수 없습니다.");
         }
-        this.balance = balance;
+        this.pointBalance = balance;
     }
 
     /**
@@ -53,8 +53,8 @@ public class User {
      *
      * @return 현재 포인트 잔액
      */
-    public long getBalance() {
-        return balance;
+    public long getPointBalance() {
+        return pointBalance;
     }
 
     /**
@@ -67,9 +67,18 @@ public class User {
         if (amount <= 0) {
             throw new IllegalArgumentException("충전 포인트는 양수여야 합니다.");
         }
-        if (balance > Long.MAX_VALUE - amount) {
+        if (pointBalance > Long.MAX_VALUE - amount) {
             throw new IllegalArgumentException("충전 후 포인트 잔액이 허용 범위를 초과합니다.");
         }
-        balance += amount;
+        pointBalance += amount;
+    }
+
+    /**
+     * 기존 호출부 호환을 위해 현재 포인트 잔액을 반환한다.
+     *
+     * @return 현재 포인트 잔액
+     */
+    public long getBalance() {
+        return getPointBalance();
     }
 }

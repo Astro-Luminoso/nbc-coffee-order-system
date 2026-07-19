@@ -118,6 +118,29 @@ public class IdempotencyRecord {
         if (isCompleted()) {
             throw new IllegalStateException("이미 완료된 멱등성 작업입니다.");
         }
+        complete(httpStatus, responseBody, completedAt);
+    }
+
+    /**
+     * 주문 결제 결과를 완료 상태로 저장한다.
+     *
+     * @param orderId 생성된 주문 식별자
+     * @param httpStatus 최초 성공 HTTP 상태
+     * @param responseBody 최초 성공 공통 응답 JSON
+     * @param completedAt 완료 시각
+     */
+    public void completeOrderPayment(long orderId, int httpStatus, String responseBody, Instant completedAt) {
+        if (id.getOperation() != IdempotencyOperation.ORDER_PAYMENT) {
+            throw new IllegalStateException("주문 결제 작업만 완료할 수 있습니다.");
+        }
+        if (isCompleted()) {
+            throw new IllegalStateException("이미 완료된 멱등성 작업입니다.");
+        }
+        this.orderId = orderId;
+        complete(httpStatus, responseBody, completedAt);
+    }
+
+    private void complete(int httpStatus, String responseBody, Instant completedAt) {
         this.status = IdempotencyStatus.COMPLETED;
         this.httpStatus = httpStatus;
         this.responseBody = Objects.requireNonNull(responseBody);
@@ -162,6 +185,15 @@ public class IdempotencyRecord {
      */
     public Integer getHttpStatus() {
         return httpStatus;
+    }
+
+    /**
+     * 결제 주문 식별자를 반환한다.
+     *
+     * @return 주문 결제가 아닌 경우 {@code null}
+     */
+    public Long getOrderId() {
+        return orderId;
     }
 
     /**

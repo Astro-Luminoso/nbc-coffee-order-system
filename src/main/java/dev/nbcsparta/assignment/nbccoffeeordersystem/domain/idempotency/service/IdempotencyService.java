@@ -11,7 +11,6 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
-import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -24,54 +23,23 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class IdempotencyService {
 
-    private static final Duration POINT_CHARGE_PENDING_RETENTION = Duration.ofHours(24);
-
     private final IdempotencyRecordRepository idempotencyRecordRepository;
-    private final Duration orderAttemptTtl;
-
+    private final Duration pendingRetention;
     /**
      * 멱등성 레코드 저장소를 사용하는 서비스를 생성한다.
      *
      * @param idempotencyRecordRepository 멱등성 레코드 저장소
-     * @param orderAttemptTtl 주문 시도의 대기 상태 유지 시간
+     * @param pendingRetention 대기 상태 멱등성 레코드 유지 시간
      */
     public IdempotencyService(
             IdempotencyRecordRepository idempotencyRecordRepository,
-            @Value("${order-attempt.ttl:PT30M}") Duration orderAttemptTtl
+            @Value("${idempotency.pending-retention:PT24H}") Duration pendingRetention
     ) {
         this.idempotencyRecordRepository = idempotencyRecordRepository;
-        if (orderAttemptTtl.isZero() || orderAttemptTtl.isNegative()) {
-            throw new IllegalArgumentException("주문 시도 유지 시간은 양수여야 합니다.");
+        if (pendingRetention.isZero() || pendingRetention.isNegative()) {
+            throw new IllegalArgumentException("멱등성 대기 유지 시간은 양수여야 합니다.");
         }
-        this.orderAttemptTtl = orderAttemptTtl;
-    }
-
-    /**
-     * 서버가 발급한 식별자로 대기 상태 주문 시도를 저장한다.
-     *
-     * <p>저장되는 정규 요청은 사용자와 메뉴 식별자만 포함하며, 생성 이후 변경되지 않는다.
-     * 이 단계에서는 포인트, 주문, 주문 항목 또는 배달 작업을 만들지 않는다.</p>
-     *
-     * @param userId 주문과 결제를 수행할 사용자 식별자
-     * @param menuId 주문할 메뉴 식별자
-     * @return 서버가 발급한 주문 시도 식별자와 만료 시각
-     */
-    @Transactional
-    public CreatedOrderAttempt createOrderAttempt(long userId, long menuId) {
-        String orderAttemptId = UUID.randomUUID().toString();
-        String canonicalRequest = canonicalOrderAttemptRequest(userId, menuId);
-        Instant now = Instant.now();
-        Instant expiresAt = now.plus(orderAttemptTtl);
-
-        idempotencyRecordRepository.save(new IdempotencyRecord(
-                new IdempotencyRecordId(IdempotencyOperation.ORDER_ATTEMPT, orderAttemptId),
-                canonicalRequest,
-                sha256(canonicalRequest),
-                now,
-                expiresAt
-        ));
-
-        return new CreatedOrderAttempt(orderAttemptId, expiresAt);
+        this.pendingRetention = pendingRetention;
     }
 
     /**
@@ -87,23 +55,19 @@ public class IdempotencyService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void reservePointCharge(String idempotencyKey, long userId, long amount) {
-        String canonicalRequest = canonicalPointChargeRequest(userId, amount);
-        IdempotencyRecordId recordId = new IdempotencyRecordId(
-                IdempotencyOperation.POINT_CHARGE,
-                idempotencyKey
-        );
-        if (idempotencyRecordRepository.existsById(recordId)) {
-            return;
-        }
+        reserve(IdempotencyOperation.POINT_CHARGE, idempotencyKey, canonicalPointChargeRequest(userId, amount));
+    }
 
-        Instant now = Instant.now();
-        idempotencyRecordRepository.saveAndFlush(new IdempotencyRecord(
-                recordId,
-                canonicalRequest,
-                sha256(canonicalRequest),
-                now,
-                now.plus(POINT_CHARGE_PENDING_RETENTION)
-        ));
+    /**
+     * 주문 결제 멱등성 레코드를 독립 트랜잭션으로 예약한다.
+     *
+     * @param idempotencyKey 클라이언트 멱등성 키
+     * @param userId 결제할 사용자 식별자
+     * @param menuId 주문할 메뉴 식별자
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void reserveOrderPayment(String idempotencyKey, long userId, long menuId) {
+        reserve(IdempotencyOperation.ORDER_PAYMENT, idempotencyKey, canonicalOrderPaymentRequest(userId, menuId));
     }
 
     /**
@@ -154,6 +118,27 @@ public class IdempotencyService {
     }
 
     /**
+     * 예약된 주문 결제 레코드를 잠근 뒤 새 실행 또는 완료 결과를 반환한다.
+     *
+     * @param idempotencyKey 클라이언트 멱등성 키
+     * @param userId 결제할 사용자 식별자
+     * @param menuId 주문할 메뉴 식별자
+     * @return 결제 처리 준비 결과
+     */
+    @Transactional
+    public PreparedOrderPayment prepareOrderPayment(String idempotencyKey, long userId, long menuId) {
+        String requestHash = sha256(canonicalOrderPaymentRequest(userId, menuId));
+        IdempotencyRecord record = findForUpdate(IdempotencyOperation.ORDER_PAYMENT, idempotencyKey);
+        if (!record.hasRequestHash(requestHash)) {
+            throw new IdempotencyKeyReusedException("동일한 멱등성 키에 다른 요청을 사용할 수 없습니다.");
+        }
+        if (record.isCompleted()) {
+            return PreparedOrderPayment.completed(idempotencyKey, record.getHttpStatus(), record.getResponseBody());
+        }
+        return PreparedOrderPayment.pending(idempotencyKey);
+    }
+
+    /**
      * 포인트 충전과 함께 최초 성공 HTTP 결과를 완료 상태로 저장한다.
      *
      * <p>호출자는 사용자 잔액 변경과 이 메서드를 같은 트랜잭션에서 호출해야 한다.</p>
@@ -180,6 +165,28 @@ public class IdempotencyService {
     }
 
     /**
+     * 주문 결제와 함께 최초 성공 결과를 완료 상태로 저장한다.
+     *
+     * @param prepared 결제 처리 준비 결과
+     * @param orderId 생성된 주문 식별자
+     * @param httpStatus 최초 성공 HTTP 상태
+     * @param responseBody 최초 성공 공통 응답 JSON
+     */
+    @Transactional
+    public void completeOrderPayment(
+            PreparedOrderPayment prepared,
+            long orderId,
+            int httpStatus,
+            String responseBody
+    ) {
+        if (prepared.completed()) {
+            throw new IllegalArgumentException("저장된 완료 결과는 다시 완료 처리할 수 없습니다.");
+        }
+        IdempotencyRecord record = findForUpdate(IdempotencyOperation.ORDER_PAYMENT, prepared.idempotencyKey());
+        record.completeOrderPayment(orderId, httpStatus, responseBody, Instant.now());
+    }
+
+    /**
      * 포인트 충전 요청을 불변 필드 순서의 JSON으로 정규화한다.
      *
      * @param userId 충전 대상 사용자 식별자
@@ -197,8 +204,28 @@ public class IdempotencyService {
      * @param menuId 주문할 메뉴 식별자
      * @return 정규 요청 JSON
      */
-    private String canonicalOrderAttemptRequest(long userId, long menuId) {
+    private String canonicalOrderPaymentRequest(long userId, long menuId) {
         return "{\"userId\":" + userId + ",\"menuId\":" + menuId + "}";
+    }
+
+    private void reserve(IdempotencyOperation operation, String idempotencyKey, String canonicalRequest) {
+        IdempotencyRecordId recordId = new IdempotencyRecordId(operation, idempotencyKey);
+        if (idempotencyRecordRepository.existsById(recordId)) {
+            return;
+        }
+        Instant now = Instant.now();
+        idempotencyRecordRepository.saveAndFlush(new IdempotencyRecord(
+                recordId,
+                canonicalRequest,
+                sha256(canonicalRequest),
+                now,
+                now.plus(pendingRetention)
+        ));
+    }
+
+    private IdempotencyRecord findForUpdate(IdempotencyOperation operation, String idempotencyKey) {
+        return idempotencyRecordRepository.findByOperationAndIdempotencyKeyForUpdate(operation, idempotencyKey)
+                .orElseThrow(() -> new IllegalStateException("예약된 멱등성 레코드를 찾을 수 없습니다."));
     }
 
     /**

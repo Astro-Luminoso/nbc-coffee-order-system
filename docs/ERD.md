@@ -29,6 +29,7 @@ erDiagram
         BIGINT menu_id FK
         BIGINT payment_amount
         DATETIME ordered_at
+        VARCHAR collection_status
     }
 
     IDEMPOTENCY_RECORD {
@@ -76,9 +77,17 @@ erDiagram
 | `menu_id` | `BIGINT` | Not null, foreign key to `menu.id` | Purchased menu |
 | `payment_amount` | `BIGINT` | Not null, check `payment_amount > 0` | Points deducted at payment time |
 | `ordered_at` | `DATETIME` | Not null | Payment completion time used by popularity queries |
+| `collection_status` | `VARCHAR(16)` | Not null: `PENDING` or `SUCCEEDED` | Whether order data still requires delivery to the collection platform |
 
 Recommended index: `(ordered_at, menu_id)` for the seven-day popularity
-aggregation.
+aggregation. An index on `collection_status` may be added if the pending-order
+retry scan requires it at production volume.
+
+An order is created with `collection_status = PENDING` in the same transaction
+as payment. A successful call changes it to `SUCCEEDED`. A failed call leaves
+it `PENDING`, and the retry scheduler attempts pending orders again on its next
+run. Delivery is at-least-once: multiple application instances can send the
+same pending order, so the collection platform must deduplicate by order ID.
 
 ### `idempotency_record`
 
@@ -110,6 +119,10 @@ response without applying a second side effect.
 - Payment uses an atomic conditional decrement, for example `balance >= price`.
 - Point deduction, `coffee_order` creation, and idempotency completion run in
   one database transaction.
+- A successfully paid order is created with a durable pending collection
+  delivery state in that same transaction.
+- A failed delivery remains pending. Retries use the order ID as their external
+  idempotency identifier.
 - Only committed `coffee_order` rows participate in popularity aggregation.
 - `payment_amount` is immutable payment history and is not changed when a
   menu's current price changes.

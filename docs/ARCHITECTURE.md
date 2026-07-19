@@ -65,7 +65,24 @@ The service performs these steps:
 4. Deduct points using an atomic conditional database update.
 5. Create one paid order with the captured payment amount.
 6. Store the completed idempotency response.
-7. Publish an order-completed event only after the transaction commits.
+7. Create the order with `collectionStatus = PENDING`.
+8. Publish an order-completed event only after the transaction commits.
+
+### `OrderCollectionDeliveryService`
+
+Owns collection-delivery attempts for completed orders. It sends a pending
+order's `orderId`, `userId`, `menuId`, and `paymentAmount` to the collection
+platform.
+
+On success, it marks the order `SUCCEEDED`. On failure, it leaves the order
+`PENDING` so a later scheduled attempt can retry it. Delivery is at-least-once;
+the collection platform must deduplicate requests by `orderId`.
+
+### `OrderCollectionRetryScheduler`
+
+Periodically finds `PENDING` orders and delegates delivery to
+`OrderCollectionDeliveryService`. It is safe to run on every application
+instance because duplicate external requests are deduplicated by `orderId`.
 
 ### `PopularMenuService`
 
@@ -108,18 +125,25 @@ data. Cache recovery aggregates MySQL orders and restores the Redis projection.
 
 ## 5. Data Collection
 
-`OrderPaymentService` publishes an event after a payment transaction commits.
-`DataCollectionClient` receives that event and sends the required payload to a
-configured Mock API or test double.
+`OrderPaymentService` creates the order with its durable delivery state inside
+the payment transaction, then publishes an event after commit. The event
+triggers an immediate best-effort attempt, while the retry scheduler provides
+recovery if that call fails or the process stops. `DataCollectionClient` sends
+the payload to a configured Mock API or test double.
 
 ```text
 Order payment transaction commits
   -> OrderCompletedEvent
-  -> DataCollectionClient
+  -> OrderCollectionDeliveryService sends the pending order
+  -> DataCollectionClient (orderId, userId, menuId, paymentAmount)
   -> Data collection platform
+
+Scheduled retry
+  -> selects PENDING order
+  -> DataCollectionClient
+  -> marks SUCCEEDED or leaves PENDING
 ```
 
-The baseline implementation does not roll back a committed payment when the
-external call fails. It records the failure in Korean operational logs. A
-transactional outbox is a future extension for systems that require guaranteed
-external delivery.
+A failed external call never rolls back a committed payment. The order row
+retains its pending state for a later retry. Delivery is at-least-once, so the
+collection platform must deduplicate requests by `orderId`.

@@ -1,10 +1,8 @@
 package dev.nbcsparta.assignment.nbccoffeeordersystem.domain.user.repository;
 
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.user.entity.User;
-import jakarta.persistence.LockModeType;
-import java.util.Optional;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -19,7 +17,16 @@ public interface UserRepository extends JpaRepository<User, Long> {
      * @param userId 조회할 사용자 식별자
      * @return 잠긴 사용자 엔티티
     */
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select user from User user where user.id = :userId")
-    Optional<User> findByIdForUpdate(@Param("userId") Long userId);
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("update User user set user.pointBalance = user.pointBalance + :amount where user.id = :userId")
+    int incrementPointBalance(@Param("userId") long userId, @Param("amount") long amount);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update User user
+            set user.pointBalance = user.pointBalance - :amount
+            where user.id = :userId
+              and user.pointBalance >= :amount
+            """)
+    int deductPointBalanceIfSufficient(@Param("userId") long userId, @Param("amount") long amount);
 }

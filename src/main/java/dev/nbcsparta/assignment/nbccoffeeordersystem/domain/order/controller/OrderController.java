@@ -1,0 +1,45 @@
+package dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.controller;
+
+import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.dto.CreateOrderRequest;
+import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.dto.OrderPaymentResponse;
+import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.service.OrderPaymentFacade;
+import dev.nbcsparta.assignment.nbccoffeeordersystem.global.dto.CommonApiResponse;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * 단일 메뉴 주문과 포인트 결제 HTTP 요청을 처리한다.
+ */
+@RestController
+@RequestMapping("/api/v1/orders")
+public class OrderController {
+
+    private final OrderPaymentFacade orderPaymentFacade;
+
+    public OrderController(OrderPaymentFacade orderPaymentFacade) {
+        this.orderPaymentFacade = orderPaymentFacade;
+    }
+
+    @PostMapping
+    public ResponseEntity<CommonApiResponse<OrderPaymentResponse>> createOrder(
+            @RequestHeader("Idempotency-Key")
+            @NotBlank(message = "멱등성 키는 필수입니다.")
+            @Size(max = 128, message = "멱등성 키는 128자 이하여야 합니다.")
+            @Pattern(regexp = "^[\\x20-\\x7E]+$", message = "멱등성 키는 ASCII 문자열이어야 합니다.")
+            String idempotencyKey,
+            @Valid @RequestBody CreateOrderRequest request
+    ) {
+        OrderPaymentResponse response = orderPaymentFacade.pay(idempotencyKey, request.userId(), request.menuId());
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(CommonApiResponse.of(HttpStatus.CREATED.value(), response));
+    }
+}

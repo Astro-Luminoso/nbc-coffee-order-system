@@ -28,17 +28,21 @@ class UserServiceTest {
     private UserService userService;
 
     /**
-     * 행 잠금 조회 결과의 사용자 잔액을 충전하는지 검증한다.
+     * DB 원자 증가 연산으로 사용자 잔액을 충전하는지 검증한다.
      */
     @Test
-    void chargeLocksUserAndReturnsUpdatedBalance() {
+    void chargeUsesAtomicIncrementAndReturnsUpdatedBalance() {
         User user = new User(100L);
-        when(userRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(user));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(userRepository.incrementPointBalance(1L, 50L)).thenAnswer(invocation -> {
+            user.charge(invocation.getArgument(1));
+            return 1;
+        });
 
         long balance = userService.charge(1L, 50L);
 
         assertThat(balance).isEqualTo(150L);
-        verify(userRepository).findByIdForUpdate(1L);
+        verify(userRepository).incrementPointBalance(1L, 50L);
     }
 
     /**
@@ -46,7 +50,7 @@ class UserServiceTest {
      */
     @Test
     void chargeThrowsUserNotFoundExceptionWhenUserDoesNotExist() {
-        when(userRepository.findByIdForUpdate(1L)).thenReturn(Optional.empty());
+        when(userRepository.findById(1L)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> userService.charge(1L, 50L))
                 .isInstanceOf(UserNotFoundException.class);

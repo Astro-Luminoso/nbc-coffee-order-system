@@ -2,6 +2,7 @@ package dev.nbcsparta.assignment.nbccoffeeordersystem.domain.user.service;
 
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.user.entity.User;
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.user.repository.UserRepository;
+import dev.nbcsparta.assignment.nbccoffeeordersystem.global.exception.InsufficientPointsException;
 import dev.nbcsparta.assignment.nbccoffeeordersystem.global.exception.UserNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,7 +38,7 @@ public class UserService {
     }
 
     /**
-     * 사용자 행을 잠근 상태에서 포인트를 충전하고 갱신된 잔액을 반환한다.
+     * DB 원자 증가 연산으로 포인트를 충전하고 갱신된 잔액을 반환한다.
      *
      * @param userId 충전할 사용자 식별자
      * @param amount 충전할 양수 포인트
@@ -46,9 +47,27 @@ public class UserService {
      */
     @Transactional
     public long charge(long userId, long amount) {
-        User user = userRepository.findByIdForUpdate(userId)
-                .orElseThrow(() -> new UserNotFoundException(userId));
-        user.charge(amount);
-        return user.getBalance();
+        getUser(userId);
+        userRepository.incrementPointBalance(userId, amount);
+        return getUser(userId).getPointBalance();
+    }
+
+    /**
+     * 잔액이 충분한 경우에만 DB 조건부 감소 연산으로 포인트를 차감한다.
+     *
+     * @param userId 차감할 사용자 식별자
+     * @param amount 차감할 양수 포인트
+     * @return 차감 후 포인트 잔액
+     */
+    @Transactional
+    public long deductIfSufficient(long userId, long amount) {
+        int updated = userRepository.deductPointBalanceIfSufficient(userId, amount);
+        if (updated == 0) {
+            if (!userRepository.existsById(userId)) {
+                throw new UserNotFoundException(userId);
+            }
+            throw new InsufficientPointsException();
+        }
+        return getUser(userId).getPointBalance();
     }
 }

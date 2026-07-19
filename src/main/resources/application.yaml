@@ -4,5 +4,5 @@ spring:
 #  profiles:
 #    active: local
 
-order-attempt:
-  ttl: PT30M
+idempotency:
+  pending-retention: PT24H
