@@ -6,14 +6,18 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.menu.dto.PopularMenuListResponse;
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.menu.entity.Menu;
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.menu.repository.MenuRepository;
+import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.repository.CoffeeOrderRepository;
+import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.repository.MenuOrderCount;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -146,6 +150,7 @@ class PopularMenuServiceIntegrationTest {
         PopularMenuService service = new PopularMenuService(
                 scenario.redisTemplate,
                 menuRepository,
+                mock(CoffeeOrderRepository.class),
                 mock(PopularMenuCacheUpdater.class),
                 rebuilder,
                 lockManager,
@@ -155,6 +160,55 @@ class PopularMenuServiceIntegrationTest {
         service.getPopularMenus();
 
         verify(rebuilder, org.mockito.Mockito.times(7)).rebuildWithinDateLock(any(LocalDate.class));
+    }
+
+    /**
+     * Redis 날짜 락을 획득하지 못해도 MySQL의 완료 주문으로 직전 7일 응답을 정확히 만든다.
+     */
+    @Test
+    void fallsBackToCommittedMySqlOrdersWhenRedisDateLockFails() {
+        RedisScenario scenario = new RedisScenario();
+        PopularMenuDateLockManager lockManager = mock(PopularMenuDateLockManager.class);
+        doThrow(new IllegalStateException("Redis 날짜 락 실패"))
+                .when(lockManager)
+                .withDateLock(any(LocalDate.class), any(Supplier.class));
+        CoffeeOrderRepository coffeeOrderRepository = mock(CoffeeOrderRepository.class);
+        java.util.List<MenuOrderCount> orderCounts = java.util.List.of(
+                menuOrderCount(3L, 4L),
+                menuOrderCount(1L, 4L),
+                menuOrderCount(2L, 2L)
+        );
+        when(coffeeOrderRepository.aggregateMenuCounts(
+                Instant.parse("2026-07-11T15:00:00Z"),
+                Instant.parse("2026-07-18T15:00:00Z")
+        )).thenReturn(orderCounts);
+        MenuRepository menuRepository = mock(MenuRepository.class);
+        when(menuRepository.findById(anyLong())).thenAnswer(invocation -> Optional.of(menu((Long) invocation.getArgument(0))));
+        PopularMenuCacheUpdater updater = mock(PopularMenuCacheUpdater.class);
+        PopularMenuCacheRebuilder rebuilder = mock(PopularMenuCacheRebuilder.class);
+        PopularMenuService service = new PopularMenuService(
+                scenario.redisTemplate,
+                menuRepository,
+                coffeeOrderRepository,
+                updater,
+                rebuilder,
+                lockManager,
+                Clock.fixed(Instant.parse("2026-07-19T00:00:00Z"), BUSINESS_ZONE)
+        );
+
+        PopularMenuListResponse response = service.getPopularMenus();
+
+        assertThat(response.periodStartDate()).isEqualTo(LocalDate.of(2026, 7, 12));
+        assertThat(response.periodEndDate()).isEqualTo(PERIOD_END);
+        assertThat(response.menus())
+                .extracting(PopularMenuListResponse.PopularMenuResponse::menuId,
+                        PopularMenuListResponse.PopularMenuResponse::orderCount)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple(1L, 4L),
+                        org.assertj.core.groups.Tuple.tuple(3L, 4L),
+                        org.assertj.core.groups.Tuple.tuple(2L, 2L)
+                );
+        verifyNoInteractions(updater, rebuilder);
     }
 
     private PopularMenuService service(
@@ -167,6 +221,7 @@ class PopularMenuServiceIntegrationTest {
         return new PopularMenuService(
                 scenario.redisTemplate,
                 menuRepository,
+                mock(CoffeeOrderRepository.class),
                 updater,
                 rebuilder,
                 immediateLockManager(),
@@ -180,6 +235,13 @@ class PopularMenuServiceIntegrationTest {
         when(menu.getName()).thenReturn("Menu " + id);
         when(menu.getPrice()).thenReturn(4_000L + id);
         return menu;
+    }
+
+    private MenuOrderCount menuOrderCount(long menuId, long orderCount) {
+        MenuOrderCount menuOrderCount = mock(MenuOrderCount.class);
+        when(menuOrderCount.getMenuId()).thenReturn(menuId);
+        when(menuOrderCount.getOrderCount()).thenReturn(orderCount);
+        return menuOrderCount;
     }
 
     @SuppressWarnings("unchecked")

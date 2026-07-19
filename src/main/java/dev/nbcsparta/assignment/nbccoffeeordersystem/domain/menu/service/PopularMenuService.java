@@ -3,8 +3,10 @@ package dev.nbcsparta.assignment.nbccoffeeordersystem.domain.menu.service;
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.menu.dto.PopularMenuListResponse;
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.menu.dto.PopularMenuListResponse.PopularMenuResponse;
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.menu.repository.MenuRepository;
+import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.repository.CoffeeOrderRepository;
 import dev.nbcsparta.assignment.nbccoffeeordersystem.global.exception.RedisUnavailableException;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.HashMap;
@@ -27,6 +29,7 @@ public class PopularMenuService {
     private static final int PERIOD_DAYS = 7;
     private final StringRedisTemplate redisTemplate;
     private final MenuRepository menuRepository;
+    private final CoffeeOrderRepository coffeeOrderRepository;
     private final PopularMenuCacheUpdater popularMenuCacheUpdater;
     private final PopularMenuCacheRebuilder popularMenuCacheRebuilder;
     private final PopularMenuDateLockManager dateLockManager;
@@ -37,6 +40,7 @@ public class PopularMenuService {
      *
      * @param redisTemplate 인기 메뉴 ZSET 저장소
      * @param menuRepository 메뉴 조회 저장소
+     * @param coffeeOrderRepository Redis 장애 시 주문 집계 저장소
      * @param popularMenuCacheUpdater 미완료 투영 처리기
      * @param popularMenuCacheRebuilder 손상 캐시 재구축기
      * @param dateLockManager 날짜별 Redis 락 관리자
@@ -45,6 +49,7 @@ public class PopularMenuService {
     public PopularMenuService(
             StringRedisTemplate redisTemplate,
             MenuRepository menuRepository,
+            CoffeeOrderRepository coffeeOrderRepository,
             PopularMenuCacheUpdater popularMenuCacheUpdater,
             PopularMenuCacheRebuilder popularMenuCacheRebuilder,
             PopularMenuDateLockManager dateLockManager
@@ -52,6 +57,7 @@ public class PopularMenuService {
         this(
                 redisTemplate,
                 menuRepository,
+                coffeeOrderRepository,
                 popularMenuCacheUpdater,
                 popularMenuCacheRebuilder,
                 dateLockManager,
@@ -62,6 +68,7 @@ public class PopularMenuService {
     PopularMenuService(
             StringRedisTemplate redisTemplate,
             MenuRepository menuRepository,
+            CoffeeOrderRepository coffeeOrderRepository,
             PopularMenuCacheUpdater popularMenuCacheUpdater,
             PopularMenuCacheRebuilder popularMenuCacheRebuilder,
             PopularMenuDateLockManager dateLockManager,
@@ -69,6 +76,7 @@ public class PopularMenuService {
     ) {
         this.redisTemplate = redisTemplate;
         this.menuRepository = menuRepository;
+        this.coffeeOrderRepository = coffeeOrderRepository;
         this.popularMenuCacheUpdater = popularMenuCacheUpdater;
         this.popularMenuCacheRebuilder = popularMenuCacheRebuilder;
         this.dateLockManager = dateLockManager;
@@ -77,14 +85,19 @@ public class PopularMenuService {
 
     /**
      * 직전 완료 7일의 Redis ZSET을 합산해 인기 메뉴 최대 세 건을 반환한다.
+     * Redis를 사용할 수 없으면 MySQL 주문 집계로 응답을 만든다.
      *
      * @return 인기 메뉴 목록
-     * @throws RedisUnavailableException Redis 기반 응답을 만들 수 없는 경우
      */
     public PopularMenuListResponse getPopularMenus() {
         LocalDate periodEnd = LocalDate.now(clock).minusDays(1);
         LocalDate periodStart = periodEnd.minusDays(PERIOD_DAYS - 1);
-        Map<Long, Long> counts = readRedisCounts(periodStart, periodEnd);
+        Map<Long, Long> counts;
+        try {
+            counts = readRedisCounts(periodStart, periodEnd);
+        } catch (RedisUnavailableException exception) {
+            counts = readMySqlCounts(periodStart, periodEnd);
+        }
         List<PopularMenuResponse> menus = counts.entrySet().stream()
                 .sorted(Map.Entry.<Long, Long>comparingByValue().reversed().thenComparing(Map.Entry.comparingByKey()))
                 .limit(3)
@@ -93,6 +106,16 @@ public class PopularMenuService {
                 .flatMap(java.util.Optional::stream)
                 .toList();
         return new PopularMenuListResponse(periodStart, periodEnd, menus);
+    }
+
+    private Map<Long, Long> readMySqlCounts(LocalDate start, LocalDate end) {
+        Instant from = start.atStartOfDay(BUSINESS_ZONE).toInstant();
+        Instant to = end.plusDays(1).atStartOfDay(BUSINESS_ZONE).toInstant();
+        Map<Long, Long> counts = new HashMap<>();
+        coffeeOrderRepository.aggregateMenuCounts(from, to).forEach(menuOrderCount ->
+                counts.merge(menuOrderCount.getMenuId(), menuOrderCount.getOrderCount(), Long::sum)
+        );
+        return counts;
     }
 
     private Map<Long, Long> readRedisCounts(LocalDate start, LocalDate end) {
