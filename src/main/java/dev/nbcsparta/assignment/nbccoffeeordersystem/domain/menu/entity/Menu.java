@@ -37,6 +37,12 @@ public class Menu {
      * @param price 메뉴 가격
      */
     public Menu(String name, long price) {
+        if (name == null || name.isBlank()) {
+            throw new IllegalArgumentException("메뉴 이름은 필수입니다.");
+        }
+        if (price <= 0) {
+            throw new IllegalArgumentException("메뉴 가격은 양수여야 합니다.");
+        }
         this.name = name;
         this.price = price;
     }
