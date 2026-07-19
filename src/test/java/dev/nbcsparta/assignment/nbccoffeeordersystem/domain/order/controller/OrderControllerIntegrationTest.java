@@ -1,6 +1,9 @@
 package dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -12,7 +15,9 @@ import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.idempotency.entity.I
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.idempotency.repository.IdempotencyRecordRepository;
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.menu.entity.Menu;
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.menu.repository.MenuRepository;
+import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.entity.CollectionStatus;
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.repository.CoffeeOrderRepository;
+import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.service.OrderCollectionRetryScheduler;
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.user.entity.User;
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.user.repository.UserRepository;
 import dev.nbcsparta.assignment.nbccoffeeordersystem.infrastructure.collector.DataCollectionClient;
@@ -47,6 +52,9 @@ class OrderControllerIntegrationTest {
     @Autowired
     private IdempotencyRecordRepository idempotencyRecordRepository;
 
+    @Autowired
+    private OrderCollectionRetryScheduler orderCollectionRetryScheduler;
+
     @MockitoBean
     private DataCollectionClient dataCollectionClient;
 
@@ -76,6 +84,8 @@ class OrderControllerIntegrationTest {
 
         assertThat(userRepository.findById(user.getId()).orElseThrow().getPointBalance()).isEqualTo(5_500L);
         assertThat(coffeeOrderRepository.count()).isEqualTo(1L);
+        var order = coffeeOrderRepository.findAll().getFirst();
+        assertThat(order.getCollectionStatus()).isEqualTo(CollectionStatus.SUCCEEDED);
         assertThat(idempotencyRecordRepository.findAll())
                 .singleElement()
                 .satisfies(record -> {
@@ -83,7 +93,45 @@ class OrderControllerIntegrationTest {
                     assertThat(record.isCompleted()).isTrue();
                     assertThat(record.getOrderId()).isNotNull();
                 });
-        verify(dataCollectionClient, times(1)).collect(user.getId(), menu.getId(), 4_500L);
+        verify(dataCollectionClient, times(1)).collect(order.getId(), user.getId(), menu.getId(), 4_500L);
+    }
+
+    @Test
+    void keepsTheOrderPendingWhenImmediateCollectionDeliveryFails() throws Exception {
+        User user = userRepository.saveAndFlush(new User(10_000L));
+        Menu menu = menuRepository.saveAndFlush(new Menu("Americano", 4_500L));
+        doThrow(new IllegalStateException("수집 플랫폼을 사용할 수 없습니다."))
+                .when(dataCollectionClient).collect(anyLong(), anyLong(), anyLong(), anyLong());
+
+        mockMvc.perform(orderRequest("collection-failure", user.getId(), menu.getId()))
+                .andExpect(status().isCreated());
+
+        var order = coffeeOrderRepository.findAll().getFirst();
+        assertThat(order.getCollectionStatus()).isEqualTo(CollectionStatus.PENDING);
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getPointBalance()).isEqualTo(5_500L);
+        verify(dataCollectionClient).collect(order.getId(), user.getId(), menu.getId(), 4_500L);
+    }
+
+    @Test
+    void retriesPendingCollectionDeliveryAndMarksTheOrderSucceededAfterSuccess() throws Exception {
+        User user = userRepository.saveAndFlush(new User(10_000L));
+        Menu menu = menuRepository.saveAndFlush(new Menu("Americano", 4_500L));
+        doThrow(new IllegalStateException("수집 플랫폼을 사용할 수 없습니다."))
+                .when(dataCollectionClient).collect(anyLong(), anyLong(), anyLong(), anyLong());
+
+        mockMvc.perform(orderRequest("collection-retry", user.getId(), menu.getId()))
+                .andExpect(status().isCreated());
+
+        var order = coffeeOrderRepository.findAll().getFirst();
+        assertThat(order.getCollectionStatus()).isEqualTo(CollectionStatus.PENDING);
+        verify(dataCollectionClient).collect(order.getId(), user.getId(), menu.getId(), 4_500L);
+
+        reset(dataCollectionClient);
+        orderCollectionRetryScheduler.retryPendingDeliveries();
+
+        assertThat(coffeeOrderRepository.findById(order.getId()).orElseThrow().getCollectionStatus())
+                .isEqualTo(CollectionStatus.SUCCEEDED);
+        verify(dataCollectionClient).collect(order.getId(), user.getId(), menu.getId(), 4_500L);
     }
 
     @Test
@@ -114,7 +162,8 @@ class OrderControllerIntegrationTest {
 
         assertThat(coffeeOrderRepository.count()).isEqualTo(1L);
         assertThat(userRepository.findById(user.getId()).orElseThrow().getPointBalance()).isEqualTo(15_500L);
-        verify(dataCollectionClient, times(1)).collect(user.getId(), americano.getId(), 4_500L);
+        var order = coffeeOrderRepository.findAll().getFirst();
+        verify(dataCollectionClient, times(1)).collect(order.getId(), user.getId(), americano.getId(), 4_500L);
     }
 
     private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder orderRequest(
