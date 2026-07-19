@@ -20,7 +20,16 @@ import java.time.Instant;
  * 결제가 완료된 단일 메뉴 주문을 표현한다.
  */
 @Entity
-@Table(name = "coffee_order", indexes = @Index(name = "idx_coffee_order_ordered_at_menu_id", columnList = "ordered_at,menu_id"))
+@Table(
+        name = "coffee_order",
+        indexes = {
+                @Index(name = "idx_coffee_order_ordered_at_menu_id", columnList = "ordered_at,menu_id"),
+                @Index(
+                        name = "idx_coffee_order_projection_status_ordered_at_id",
+                        columnList = "popularity_projection_status,ordered_at,id"
+                )
+        }
+)
 public class CoffeeOrder {
 
     @Id
@@ -45,6 +54,10 @@ public class CoffeeOrder {
     @Column(name = "collection_status", nullable = false, length = 16)
     private CollectionStatus collectionStatus;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "popularity_projection_status", nullable = false, length = 16)
+    private PopularityProjectionStatus popularityProjectionStatus;
+
     protected CoffeeOrder() {
     }
 
@@ -57,6 +70,7 @@ public class CoffeeOrder {
         this.paymentAmount = paymentAmount;
         this.orderedAt = orderedAt;
         this.collectionStatus = CollectionStatus.PENDING;
+        this.popularityProjectionStatus = PopularityProjectionStatus.PENDING;
     }
 
     public Long getId() {
@@ -87,10 +101,22 @@ public class CoffeeOrder {
         return collectionStatus == CollectionStatus.SUCCEEDED;
     }
 
+    public PopularityProjectionStatus getPopularityProjectionStatus() {
+        return popularityProjectionStatus;
+    }
+
+    public boolean isPopularityProjected() {
+        return popularityProjectionStatus == PopularityProjectionStatus.SUCCEEDED;
+    }
+
     /**
      * 외부 수집 플랫폼이 주문 데이터를 정상적으로 수신했음을 기록한다.
      */
     public void markCollectionSucceeded() {
         this.collectionStatus = CollectionStatus.SUCCEEDED;
+    }
+
+    public void markPopularityProjectionSucceeded() {
+        this.popularityProjectionStatus = PopularityProjectionStatus.SUCCEEDED;
     }
 }
