@@ -24,11 +24,7 @@ public class IdempotencyRecord {
     @EmbeddedId
     private IdempotencyRecordId id;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "request_body", nullable = false, columnDefinition = "JSON")
-    private String requestBody;
-
-    @Column(name = "request_hash", nullable = false, length = 64)
+    @Column(name = "request_hash", nullable = false, length = 64, columnDefinition = "CHAR(64)")
     private String requestHash;
 
     @Enumerated(EnumType.STRING)
@@ -65,20 +61,17 @@ public class IdempotencyRecord {
      * 대기 상태의 포인트 충전 멱등성 레코드를 생성한다.
      *
      * @param id 작업-키 복합 식별자
-     * @param requestBody 불변 정규 요청 JSON
      * @param requestHash 정규 요청의 SHA-256 해시
      * @param createdAt 생성 시각
      * @param expiresAt 대기 상태 만료 시각
      */
     public IdempotencyRecord(
             IdempotencyRecordId id,
-            String requestBody,
             String requestHash,
             Instant createdAt,
             Instant expiresAt
     ) {
         this.id = Objects.requireNonNull(id);
-        this.requestBody = Objects.requireNonNull(requestBody);
         this.requestHash = Objects.requireNonNull(requestHash);
         this.status = IdempotencyStatus.PENDING;
         this.createdAt = Objects.requireNonNull(createdAt);
@@ -158,15 +151,6 @@ public class IdempotencyRecord {
      */
     public IdempotencyRecordId getId() {
         return id;
-    }
-
-    /**
-     * 정규 요청 JSON을 반환한다.
-     *
-     * @return 정규 요청 JSON
-     */
-    public String getRequestBody() {
-        return requestBody;
     }
 
     /**

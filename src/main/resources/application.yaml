@@ -1,8 +1,20 @@
 spring:
   application:
     name: nbc-coffee-order-system
-#  profiles:
-#    active: local
+  datasource:
+    url: ${MYSQL_DB_URL}
+    username: ${MYSQL_DB_USERNAME}
+    password: ${MYSQL_DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.MySQLDialect
+    hibernate:
+      ddl-auto: validate
 
 idempotency:
   pending-retention: PT24H
+
+mockapi:
+  base-url: ${MOCKAPI_BASE_URL:}
+  connect-timeout: ${MOCKAPI_CONNECT_TIMEOUT:PT2S}
+  read-timeout: ${MOCKAPI_READ_TIMEOUT:PT5S}

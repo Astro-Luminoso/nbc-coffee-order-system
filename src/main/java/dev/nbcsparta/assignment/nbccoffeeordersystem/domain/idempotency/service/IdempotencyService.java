@@ -216,7 +216,6 @@ public class IdempotencyService {
         Instant now = Instant.now();
         idempotencyRecordRepository.saveAndFlush(new IdempotencyRecord(
                 recordId,
-                canonicalRequest,
                 sha256(canonicalRequest),
                 now,
                 now.plus(pendingRetention)

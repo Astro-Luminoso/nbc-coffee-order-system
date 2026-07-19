@@ -100,7 +100,6 @@ class IdempotencyServiceIntegrationTest {
                 )
                 .orElseThrow();
 
-        assertThat(record.getRequestBody()).isEqualTo("{\"userId\":7,\"amount\":1500}");
         assertThat(record.getRequestHash()).matches("[0-9a-f]{64}");
         assertThat(record.getHttpStatus()).isEqualTo(200);
         assertThat(record.getResponseBody()).isEqualTo("{\"httpStatus\":200}");
