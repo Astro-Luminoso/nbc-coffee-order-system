@@ -19,7 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
 
 /**
- * 사용자 저장소의 비관적 잠금 조회를 검증한다.
+ * 사용자 저장소의 원자적 포인트 갱신을 검증한다.
  */
 @DataJpaTest
 @Import(UserService.class)
@@ -35,25 +35,24 @@ class UserRepositoryIntegrationTest {
     private UserService userService;
 
     /**
-     * 사용자 행을 비관적 쓰기 잠금으로 조회하고 변경 사항을 반영하는지 검증한다.
+     * DB 원자 증가 연산이 사용자 잔액을 반영하는지 검증한다.
      */
     @Test
     @Transactional
-    void findByIdForUpdateReturnsLockedUserForBalanceUpdate() {
+    void incrementPointBalanceUpdatesBalanceAtomically() {
         User savedUser = userRepository.saveAndFlush(new User(100L));
         entityManager.clear();
 
-        User lockedUser = userRepository.findByIdForUpdate(savedUser.getId()).orElseThrow();
-        lockedUser.charge(50L);
-        entityManager.flush();
+        int updated = userRepository.incrementPointBalance(savedUser.getId(), 50L);
         entityManager.clear();
 
         User updatedUser = userRepository.findById(savedUser.getId()).orElseThrow();
+        assertThat(updated).isEqualTo(1);
         assertThat(updatedUser.getBalance()).isEqualTo(150L);
     }
 
     /**
-     * 동시에 여러 번 충전해도 행 잠금으로 갱신 유실이 발생하지 않는지 검증한다.
+     * 동시에 여러 번 충전해도 원자 갱신으로 갱신 유실이 발생하지 않는지 검증한다.
      *
      * @throws Exception 병렬 충전 작업 실행에 실패한 경우
      */
