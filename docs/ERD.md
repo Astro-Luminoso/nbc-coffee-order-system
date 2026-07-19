@@ -30,6 +30,7 @@ erDiagram
         BIGINT payment_amount
         DATETIME ordered_at
         VARCHAR collection_status
+        VARCHAR popularity_projection_status
     }
 
     IDEMPOTENCY_RECORD {
@@ -78,16 +79,36 @@ erDiagram
 | `payment_amount` | `BIGINT` | Not null, check `payment_amount > 0` | Points deducted at payment time |
 | `ordered_at` | `DATETIME` | Not null | Payment completion time used by popularity queries |
 | `collection_status` | `VARCHAR(16)` | Not null: `PENDING` or `SUCCEEDED` | Whether order data still requires delivery to the collection platform |
+| `popularity_projection_status` | `VARCHAR(16)` | Not null: `PENDING` or `SUCCEEDED` | Whether the paid order has been projected to its Redis daily popularity ZSET |
 
-Recommended index: `(ordered_at, menu_id)` for the seven-day popularity
-aggregation. An index on `collection_status` may be added if the pending-order
-retry scan requires it at production volume.
+Indexes:
+
+- `(ordered_at, menu_id)` supports seven-day popularity aggregation by time
+  range and menu.
+- `(popularity_projection_status, ordered_at, id)` supports finding pending
+  popularity projections for a date in stable order and supports rebuilding a
+  daily cache from projection-complete orders.
+- The primary key on `id` identifies the single order row that a delivery
+  attempt pessimistically locks. A separate `collection_status` index is not
+  part of the current schema; it can be evaluated if pending-delivery scans
+  become a production bottleneck.
 
 An order is created with `collection_status = PENDING` in the same transaction
-as payment. A successful call changes it to `SUCCEEDED`. A failed call leaves
-it `PENDING`, and the retry scheduler attempts pending orders again on its next
-run. Delivery is at-least-once: multiple application instances can send the
-same pending order, so the collection platform must deduplicate by order ID.
+as payment. A delivery transaction obtains the still-`PENDING` row through a
+pessimistic database lock before calling the collection platform. A successful
+call changes it to `SUCCEEDED`; a failed call leaves it `PENDING`, and the
+retry scheduler attempts it again on its next run. The lock prevents normal
+concurrent instances from calling the platform for the same order at once, but
+delivery remains at-least-once because an accepted external call and the
+database commit cannot be made atomic. The collection platform must therefore
+deduplicate by order ID.
+
+`popularity_projection_status` is initialized to `PENDING` in the payment
+transaction. After the committed order is applied to the Redis ZSET, it moves
+to `SUCCEEDED`. A projection failure leaves it `PENDING` for retry. Rebuilds
+first finish pending projections for the affected date and then aggregate the
+`SUCCEEDED` orders, so the cache remains derived from committed MySQL order
+data while avoiding a count for an unconfirmed projection.
 
 ### `idempotency_record`
 
@@ -121,8 +142,15 @@ response without applying a second side effect.
   one database transaction.
 - A successfully paid order is created with a durable pending collection
   delivery state in that same transaction.
-- A failed delivery remains pending. Retries use the order ID as their external
-  idempotency identifier.
+- A delivery attempt pessimistically locks the still-pending order row before
+  it calls the external platform. A failed delivery remains pending; retries
+  use the order ID as their external idempotency identifier.
+- Collection delivery is at-least-once because the external-call result and
+  the local `SUCCEEDED` commit are not one atomic operation. The receiver
+  deduplicates by order ID.
+- A paid order starts with `popularity_projection_status = PENDING`. Only a
+  successful Redis projection changes it to `SUCCEEDED`; failed projections are
+  retried.
 - Only committed `coffee_order` rows participate in popularity aggregation.
 - `payment_amount` is immutable payment history and is not changed when a
   menu's current price changes.
@@ -145,8 +173,11 @@ of truth.
 After a payment commits, the application increments the matching daily member
 with `ZINCRBY`. A single Redis script creates the order's projection marker
 with `SETNX` and increments the score atomically, so a retried event cannot
-increment the same order twice. The popular-menu API combines the current day's
-key is excluded and the API combines the seven preceding completed daily keys.
-If a key is missing, expired unexpectedly, or fails cache validation, the
-application aggregates the corresponding MySQL orders and rebuilds the key
-before returning the result.
+increment the same order twice. After that script completes, the order's
+`popularity_projection_status` changes from `PENDING` to `SUCCEEDED`; a script
+or persistence failure leaves the status pending for retry. The popular-menu
+API excludes the current day's key and combines the seven preceding completed
+daily keys. If a key is missing, expired unexpectedly, or fails cache
+validation, the application first completes pending projections for the date,
+then aggregates the corresponding `SUCCEEDED` MySQL orders and rebuilds the
+key before returning the result.
