@@ -39,6 +39,7 @@ erDiagram
         CHAR request_hash
         VARCHAR status
         BIGINT order_id FK
+        INT http_status
         JSON response_body
         DATETIME created_at
         DATETIME completed_at
@@ -122,6 +123,7 @@ multiple instances. It stores one record per operation and client key.
 | `request_hash` | `CHAR(64)` | Not null | SHA-256 hash of the canonical request |
 | `status` | `VARCHAR(16)` | Not null: `PENDING` or `COMPLETED` | Processing state |
 | `order_id` | `BIGINT` | Nullable, unique, foreign key to `coffee_order.id` | Created order for `ORDER_PAYMENT` |
+| `http_status` | `INT` | Nullable | Original successful HTTP response status |
 | `response_body` | `JSON` | Nullable | Original successful response body |
 | `created_at` | `DATETIME` | Not null | Record creation time |
 | `completed_at` | `DATETIME` | Nullable | Successful completion time |
