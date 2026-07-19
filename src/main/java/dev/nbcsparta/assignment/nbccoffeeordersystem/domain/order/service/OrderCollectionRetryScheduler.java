@@ -14,6 +14,12 @@ public class OrderCollectionRetryScheduler {
     private final CoffeeOrderRepository coffeeOrderRepository;
     private final OrderCollectionDeliveryService orderCollectionDeliveryService;
 
+    /**
+     * 수집 전송 재시도에 필요한 저장소와 서비스를 주입한다.
+     *
+     * @param coffeeOrderRepository 주문 저장소
+     * @param orderCollectionDeliveryService 외부 수집 전송 서비스
+     */
     public OrderCollectionRetryScheduler(
             CoffeeOrderRepository coffeeOrderRepository,
             OrderCollectionDeliveryService orderCollectionDeliveryService

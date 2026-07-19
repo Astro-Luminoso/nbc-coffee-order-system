@@ -61,6 +61,14 @@ public class CoffeeOrder {
     protected CoffeeOrder() {
     }
 
+    /**
+     * 결제 완료된 단일 메뉴 주문을 생성한다.
+     *
+     * @param user 주문한 사용자
+     * @param menu 주문한 메뉴
+     * @param paymentAmount 결제한 포인트
+     * @param orderedAt 결제 완료 시각
+     */
     public CoffeeOrder(User user, Menu menu, long paymentAmount, Instant orderedAt) {
         if (paymentAmount <= 0) {
             throw new IllegalArgumentException("결제 금액은 양수여야 합니다.");
@@ -73,38 +81,83 @@ public class CoffeeOrder {
         this.popularityProjectionStatus = PopularityProjectionStatus.PENDING;
     }
 
+    /**
+     * 주문 식별자를 반환한다.
+     *
+     * @return 주문 식별자
+     */
     public Long getId() {
         return id;
     }
 
+    /**
+     * 주문한 사용자 식별자를 반환한다.
+     *
+     * @return 사용자 식별자
+     */
     public long getUserId() {
         return user.getId();
     }
 
+    /**
+     * 주문한 메뉴 식별자를 반환한다.
+     *
+     * @return 메뉴 식별자
+     */
     public long getMenuId() {
         return menu.getId();
     }
 
+    /**
+     * 결제 금액을 반환한다.
+     *
+     * @return 결제 금액
+     */
     public long getPaymentAmount() {
         return paymentAmount;
     }
 
+    /**
+     * 주문 완료 시각을 반환한다.
+     *
+     * @return 주문 완료 시각
+     */
     public Instant getOrderedAt() {
         return orderedAt;
     }
 
+    /**
+     * 외부 데이터 수집 전송 상태를 반환한다.
+     *
+     * @return 수집 전송 상태
+     */
     public CollectionStatus getCollectionStatus() {
         return collectionStatus;
     }
 
+    /**
+     * 외부 데이터 수집 전송이 완료됐는지 반환한다.
+     *
+     * @return 전송 완료 여부
+     */
     public boolean isCollectionDelivered() {
         return collectionStatus == CollectionStatus.SUCCEEDED;
     }
 
+    /**
+     * Redis 인기 메뉴 투영 상태를 반환한다.
+     *
+     * @return 인기 메뉴 투영 상태
+     */
     public PopularityProjectionStatus getPopularityProjectionStatus() {
         return popularityProjectionStatus;
     }
 
+    /**
+     * Redis 인기 메뉴 투영이 완료됐는지 반환한다.
+     *
+     * @return 인기 메뉴 투영 완료 여부
+     */
     public boolean isPopularityProjected() {
         return popularityProjectionStatus == PopularityProjectionStatus.SUCCEEDED;
     }
@@ -116,6 +169,9 @@ public class CoffeeOrder {
         this.collectionStatus = CollectionStatus.SUCCEEDED;
     }
 
+    /**
+     * 주문의 Redis 인기 메뉴 투영이 완료되었음을 기록한다.
+     */
     public void markPopularityProjectionSucceeded() {
         this.popularityProjectionStatus = PopularityProjectionStatus.SUCCEEDED;
     }

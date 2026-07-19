@@ -33,6 +33,13 @@ public class PopularMenuCacheUpdater {
     private final CoffeeOrderRepository coffeeOrderRepository;
     private final PopularMenuDateLockManager dateLockManager;
 
+    /**
+     * 주문 투영에 필요한 Redis, 주문 저장소, 날짜 락 관리자를 주입한다.
+     *
+     * @param redisTemplate Redis ZSET 및 marker 저장소
+     * @param coffeeOrderRepository 주문과 투영 상태 저장소
+     * @param dateLockManager 날짜별 투영 직렬화 관리자
+     */
     public PopularMenuCacheUpdater(
             StringRedisTemplate redisTemplate,
             CoffeeOrderRepository coffeeOrderRepository,
@@ -43,6 +50,11 @@ public class PopularMenuCacheUpdater {
         this.dateLockManager = dateLockManager;
     }
 
+    /**
+     * 커밋된 주문을 해당 영업일의 Redis ZSET에 투영한다.
+     *
+     * @param event 커밋된 주문 이벤트
+     */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void project(OrderCompletedEvent event) {
         LocalDate date = event.orderedAt().atZone(BUSINESS_ZONE).toLocalDate();
@@ -57,6 +69,9 @@ public class PopularMenuCacheUpdater {
         }
     }
 
+    /**
+     * 지정한 영업일에 남아 있는 PENDING 투영을 날짜 락으로 보호하여 재시도한다.
+     */
     public void projectPendingForDate(LocalDate date) {
         dateLockManager.withDateLock(date, () -> {
             projectPendingForDateWithinDateLock(date);
@@ -64,10 +79,20 @@ public class PopularMenuCacheUpdater {
         });
     }
 
+    /**
+     * 호출자가 해당 날짜의 락을 보유한 상태에서 PENDING 투영을 완료 처리한다.
+     *
+     * <p>재구축은 이 메서드를 먼저 호출한 뒤 SUCCEEDED 주문만 집계해야 한다.</p>
+     */
     public void projectPendingForDateWithinDateLock(LocalDate date) {
         projectPendingForDateWithinDateLock(date, popularityKey(date));
     }
 
+    /**
+     * 호출자가 해당 날짜의 락을 보유한 상태에서 지정한 ZSET에 PENDING 투영을 완료 처리한다.
+     *
+     * <p>재구축은 임시 ZSET을 전달해 live ZSET을 변경하지 않은 채 PENDING 상태를 확정한다.</p>
+     */
     public void projectPendingForDateWithinDateLock(LocalDate date, String targetZSetKey) {
         Instant from = date.atStartOfDay(BUSINESS_ZONE).toInstant();
         Instant to = date.plusDays(1).atStartOfDay(BUSINESS_ZONE).toInstant();

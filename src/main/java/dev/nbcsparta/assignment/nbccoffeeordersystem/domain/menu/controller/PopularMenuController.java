@@ -18,10 +18,20 @@ public class PopularMenuController {
 
     private final PopularMenuService popularMenuService;
 
+    /**
+     * 인기 메뉴 유스케이스를 사용하는 컨트롤러를 생성한다.
+     *
+     * @param popularMenuService 인기 메뉴 조회 서비스
+     */
     public PopularMenuController(PopularMenuService popularMenuService) {
         this.popularMenuService = popularMenuService;
     }
 
+    /**
+     * 직전 완료 7일의 인기 메뉴 최대 세 건을 조회한다.
+     *
+     * @return 인기 메뉴 목록 공통 응답
+     */
     @GetMapping
     public ResponseEntity<CommonApiResponse<PopularMenuListResponse>> getPopularMenus() {
         return ResponseEntity.ok(CommonApiResponse.of(HttpStatus.OK.value(), popularMenuService.getPopularMenus()));

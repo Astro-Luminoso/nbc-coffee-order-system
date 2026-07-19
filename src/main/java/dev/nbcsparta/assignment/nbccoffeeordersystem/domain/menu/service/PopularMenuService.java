@@ -32,6 +32,15 @@ public class PopularMenuService {
     private final PopularMenuDateLockManager dateLockManager;
     private final Clock clock;
 
+    /**
+     * 인기 메뉴 조회에 필요한 Redis와 도메인 서비스를 주입한다.
+     *
+     * @param redisTemplate 인기 메뉴 ZSET 저장소
+     * @param menuRepository 메뉴 조회 저장소
+     * @param popularMenuCacheUpdater 미완료 투영 처리기
+     * @param popularMenuCacheRebuilder 손상 캐시 재구축기
+     * @param dateLockManager 날짜별 Redis 락 관리자
+     */
     @Autowired
     public PopularMenuService(
             StringRedisTemplate redisTemplate,
@@ -66,6 +75,12 @@ public class PopularMenuService {
         this.clock = clock;
     }
 
+    /**
+     * 직전 완료 7일의 Redis ZSET을 합산해 인기 메뉴 최대 세 건을 반환한다.
+     *
+     * @return 인기 메뉴 목록
+     * @throws RedisUnavailableException Redis 기반 응답을 만들 수 없는 경우
+     */
     public PopularMenuListResponse getPopularMenus() {
         LocalDate periodEnd = LocalDate.now(clock).minusDays(1);
         LocalDate periodStart = periodEnd.minusDays(PERIOD_DAYS - 1);

@@ -25,10 +25,22 @@ public class OrderController {
 
     private final OrderPaymentFacade orderPaymentFacade;
 
+    /**
+     * 주문 결제 유스케이스를 사용하는 컨트롤러를 생성한다.
+     *
+     * @param orderPaymentFacade 주문 결제 파사드
+     */
     public OrderController(OrderPaymentFacade orderPaymentFacade) {
         this.orderPaymentFacade = orderPaymentFacade;
     }
 
+    /**
+     * 사용자 포인트로 메뉴를 주문하고 결제한다.
+     *
+     * @param idempotencyKey 재시도를 식별하는 멱등성 키
+     * @param request 사용자와 메뉴를 포함한 주문 요청
+     * @return 생성된 주문 결제 공통 응답
+     */
     @PostMapping
     public ResponseEntity<CommonApiResponse<OrderPaymentResponse>> createOrder(
             @RequestHeader("Idempotency-Key")

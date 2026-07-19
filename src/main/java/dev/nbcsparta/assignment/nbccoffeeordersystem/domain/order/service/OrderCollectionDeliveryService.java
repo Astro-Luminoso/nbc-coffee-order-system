@@ -20,6 +20,12 @@ public class OrderCollectionDeliveryService {
     private final CoffeeOrderRepository coffeeOrderRepository;
     private final DataCollectionClient dataCollectionClient;
 
+    /**
+     * 주문 저장소와 외부 수집 클라이언트를 주입한다.
+     *
+     * @param coffeeOrderRepository 주문 저장소
+     * @param dataCollectionClient 외부 데이터 수집 클라이언트
+     */
     public OrderCollectionDeliveryService(
             CoffeeOrderRepository coffeeOrderRepository,
             DataCollectionClient dataCollectionClient
@@ -30,6 +36,8 @@ public class OrderCollectionDeliveryService {
 
     /**
      * 주문 데이터를 한 번 전송하고, 성공한 주문만 전송 완료 상태로 변경한다.
+     *
+     * @param orderId 전송할 주문 식별자
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void deliver(long orderId) {
