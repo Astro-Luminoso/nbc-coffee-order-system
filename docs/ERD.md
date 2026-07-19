@@ -30,6 +30,7 @@ erDiagram
         BIGINT payment_amount
         DATETIME ordered_at
         VARCHAR collection_status
+        VARCHAR popularity_projection_status
     }
 
     IDEMPOTENCY_RECORD {
@@ -38,6 +39,7 @@ erDiagram
         CHAR request_hash
         VARCHAR status
         BIGINT order_id FK
+        INT http_status
         JSON response_body
         DATETIME created_at
         DATETIME completed_at
@@ -78,16 +80,36 @@ erDiagram
 | `payment_amount` | `BIGINT` | Not null, check `payment_amount > 0` | Points deducted at payment time |
 | `ordered_at` | `DATETIME` | Not null | Payment completion time used by popularity queries |
 | `collection_status` | `VARCHAR(16)` | Not null: `PENDING` or `SUCCEEDED` | Whether order data still requires delivery to the collection platform |
+| `popularity_projection_status` | `VARCHAR(16)` | Not null: `PENDING` or `SUCCEEDED` | Whether the paid order has been projected to its Redis daily popularity ZSET |
 
-Recommended index: `(ordered_at, menu_id)` for the seven-day popularity
-aggregation. An index on `collection_status` may be added if the pending-order
-retry scan requires it at production volume.
+Indexes:
+
+- `(ordered_at, menu_id)` supports seven-day popularity aggregation by time
+  range and menu.
+- `(popularity_projection_status, ordered_at, id)` supports finding pending
+  popularity projections for a date in stable order and supports rebuilding a
+  daily cache from projection-complete orders.
+- The primary key on `id` identifies the single order row that a delivery
+  attempt pessimistically locks. A separate `collection_status` index is not
+  part of the current schema; it can be evaluated if pending-delivery scans
+  become a production bottleneck.
 
 An order is created with `collection_status = PENDING` in the same transaction
-as payment. A successful call changes it to `SUCCEEDED`. A failed call leaves
-it `PENDING`, and the retry scheduler attempts pending orders again on its next
-run. Delivery is at-least-once: multiple application instances can send the
-same pending order, so the collection platform must deduplicate by order ID.
+as payment. A delivery transaction obtains the still-`PENDING` row through a
+pessimistic database lock before calling MockAPI.io. The client first looks up
+the external `orders` resource by the local order ID. One identical record or a
+successful create changes the local status to `SUCCEEDED`; a failed call or
+conflict leaves it `PENDING`, and the retry scheduler attempts it again on its
+next run. The MockAPI.io-generated resource `id` is not persisted because the
+local `coffee_order.id` is the reconciliation key. No relational schema change
+is required for the external integration.
+
+`popularity_projection_status` is initialized to `PENDING` in the payment
+transaction. After the committed order is applied to the Redis ZSET, it moves
+to `SUCCEEDED`. A projection failure leaves it `PENDING` for retry. Rebuilds
+first finish pending projections for the affected date and then aggregate the
+`SUCCEEDED` orders, so the cache remains derived from committed MySQL order
+data while avoiding a count for an unconfirmed projection.
 
 ### `idempotency_record`
 
@@ -101,6 +123,7 @@ multiple instances. It stores one record per operation and client key.
 | `request_hash` | `CHAR(64)` | Not null | SHA-256 hash of the canonical request |
 | `status` | `VARCHAR(16)` | Not null: `PENDING` or `COMPLETED` | Processing state |
 | `order_id` | `BIGINT` | Nullable, unique, foreign key to `coffee_order.id` | Created order for `ORDER_PAYMENT` |
+| `http_status` | `INT` | Nullable | Original successful HTTP response status |
 | `response_body` | `JSON` | Nullable | Original successful response body |
 | `created_at` | `DATETIME` | Not null | Record creation time |
 | `completed_at` | `DATETIME` | Nullable | Successful completion time |
@@ -121,8 +144,16 @@ response without applying a second side effect.
   one database transaction.
 - A successfully paid order is created with a durable pending collection
   delivery state in that same transaction.
-- A failed delivery remains pending. Retries use the order ID as their external
-  idempotency identifier.
+- A delivery attempt pessimistically locks the still-pending order row before
+  it calls MockAPI.io. A failed delivery remains pending; every retry uses the
+  local order ID to look up an existing external record before creating one.
+- The external-call result and the local `SUCCEEDED` commit are not one atomic
+  operation. Lookup-before-create reconciles application-owned retries, while
+  manual or unrelated external writes remain outside the relational
+  consistency boundary.
+- A paid order starts with `popularity_projection_status = PENDING`. Only a
+  successful Redis projection changes it to `SUCCEEDED`; failed projections are
+  retried.
 - Only committed `coffee_order` rows participate in popularity aggregation.
 - `payment_amount` is immutable payment history and is not changed when a
   menu's current price changes.
@@ -145,8 +176,11 @@ of truth.
 After a payment commits, the application increments the matching daily member
 with `ZINCRBY`. A single Redis script creates the order's projection marker
 with `SETNX` and increments the score atomically, so a retried event cannot
-increment the same order twice. The popular-menu API combines the current day's
-key is excluded and the API combines the seven preceding completed daily keys.
-If a key is missing, expired unexpectedly, or fails cache validation, the
-application aggregates the corresponding MySQL orders and rebuilds the key
-before returning the result.
+increment the same order twice. After that script completes, the order's
+`popularity_projection_status` changes from `PENDING` to `SUCCEEDED`; a script
+or persistence failure leaves the status pending for retry. The popular-menu
+API excludes the current day's key and combines the seven preceding completed
+daily keys. If a key is missing, expired unexpectedly, or fails cache
+validation, the application first completes pending projections for the date,
+then aggregates the corresponding `SUCCEEDED` MySQL orders and rebuilds the
+key before returning the result.

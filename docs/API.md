@@ -6,7 +6,7 @@ All endpoints use the `/api/v1` base path and return a
 `CommonApiResponse<T>` envelope. Shared validation, response, error, and
 idempotency rules are defined in [`CONVENTION.md`](CONVENTION.md).
 
-## 2. Endpoint Summary
+## 2. Public Endpoint Summary
 
 | Feature | Method | Path | Success status |
 |---|---|---|---|
@@ -109,7 +109,7 @@ transaction. The payment amount is the menu price at payment time. Repeating a
 completed matching request returns the original `201 Created` response without
 another deduction or order.
 
-After commit, the application sends this payload to the configured data
+After commit, the application passes this payload to the configured data
 collection client:
 
 ```json
@@ -121,15 +121,98 @@ collection client:
 }
 ```
 
-`orderId` is the external delivery idempotency identifier. The collection
-platform must ignore duplicate payloads with the same order ID.
-
 The order is created with a pending collection-delivery state in the same
 transaction as payment. The application attempts delivery after commit. An
 external delivery failure does not undo a committed payment; it records a
 pending state on the order and is retried by a shared scheduler.
 
-## 6. List Popular Menus
+## 6. MockAPI.io Order Collection (Outbound)
+
+This is an outbound integration contract, not a public coffee-order-system
+endpoint. The MockAPI.io project base URL is supplied through external
+configuration and already includes the project API prefix. The resource path is
+fixed to `/orders`.
+
+### 6.1 Resource Schema
+
+| Field | Direction | Type | Constraints |
+|---|---|---|---|
+| `id` | Response only | String | MockAPI.io-generated resource identifier; not stored locally |
+| `orderId` | Request and response | Number | Positive local paid-order identifier and reconciliation key |
+| `userId` | Request and response | Number | Positive local user identifier |
+| `menuId` | Request and response | Number | Positive local menu identifier |
+| `paymentAmount` | Request and response | Number | Positive integer points captured at payment time |
+
+### 6.2 Lookup Before Create
+
+Every initial attempt and retry first filters the external collection by the
+local order ID.
+
+```http
+GET ${MOCKAPI_BASE_URL}/orders?orderId=1001
+Accept: application/json
+```
+
+A previously delivered order returns a collection such as:
+
+```json
+[
+  {
+    "id": "42",
+    "orderId": 1001,
+    "userId": 1,
+    "menuId": 2,
+    "paymentAmount": 5000
+  }
+]
+```
+
+Exactly one record whose order fields match the local order completes the
+delivery without another create request. An empty array proceeds to the create
+request. Multiple records, or a matching `orderId` with different order fields,
+are external-data conflicts and leave the local order `PENDING`.
+
+### 6.3 Create Collected Order
+
+When lookup returns an empty array, the client creates the resource.
+
+```http
+POST ${MOCKAPI_BASE_URL}/orders
+Content-Type: application/json
+Accept: application/json
+
+{
+  "orderId": 1001,
+  "userId": 1,
+  "menuId": 2,
+  "paymentAmount": 5000
+}
+```
+
+A successful MockAPI.io response contains the created record and its generated
+`id`:
+
+```json
+{
+  "id": "42",
+  "orderId": 1001,
+  "userId": 1,
+  "menuId": 2,
+  "paymentAmount": 5000
+}
+```
+
+The client accepts a `2xx` response only when its JSON body can be parsed and
+the returned order fields match the request. It does not persist the MockAPI.io
+`id`; the local `orderId` remains the reconciliation key.
+
+Transport errors, timeouts, non-`2xx` responses, malformed bodies, and data
+conflicts are failed delivery attempts. They do not alter the committed payment
+and leave `collection_status = PENDING` for the shared scheduler. The HTTP
+client must not automatically retry `POST`, because the next scheduled attempt
+must perform lookup before create.
+
+## 7. List Popular Menus
 
 ```http
 GET /api/v1/menus/popular
@@ -163,7 +246,7 @@ Popularity counts are read from Redis daily ZSETs. MySQL paid orders remain the
 source of truth: a missing, unavailable, or invalid Redis cache is rebuilt from
 MySQL aggregation before the response is returned.
 
-## 7. Errors
+## 8. Errors
 
 | Condition | Status | Code |
 |---|---|---|
@@ -174,7 +257,7 @@ MySQL aggregation before the response is returned.
 | Same idempotency key with a different request | `409 Conflict` | `IDEMPOTENCY_KEY_REUSED` |
 | Unexpected failure | `500 Internal Server Error` | `INTERNAL_SERVER_ERROR` |
 
-## 8. Consistency Guarantees
+## 9. Consistency Guarantees
 
 - A successful point charge is applied exactly once for its operation and key.
 - A successful order means the point deduction and order creation committed
@@ -183,7 +266,10 @@ MySQL aggregation before the response is returned.
   creating another order.
 - A failed payment leaves the balance and order data unchanged.
 - A successful payment creates one order with a durable pending collection
-  delivery state. Delivery may be attempted more than once, but the receiver
-  deduplicates by `orderId`.
+  delivery state. Delivery may be attempted more than once, but every attempt
+  queries MockAPI.io by `orderId` before it creates a record.
+- One identical MockAPI.io record completes delivery. No record is created when
+  lookup finds an identical delivery, and conflicting external data remains a
+  failed pending delivery.
 - Popular-menu counts are cached in Redis and can be rebuilt from committed
   MySQL order data without changing the returned count.

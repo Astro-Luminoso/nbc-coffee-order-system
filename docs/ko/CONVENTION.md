@@ -77,9 +77,28 @@
 | `IdempotencyKeyReusedException` | `409 Conflict` | `IDEMPOTENCY_KEY_REUSED` |
 | `InternalServerErrorException` | `500 Internal Server Error` | `INTERNAL_SERVER_ERROR` |
 
-## 6. 로그와 코드 주석
+## 6. Outbound MockAPI.io 연동
+
+- MockAPI.io 프로젝트 Base URL은 `MOCKAPI_BASE_URL`로 제공하며 저장소에 커밋하지 않습니다.
+  프로젝트 API prefix를 포함하고 `/orders` 리소스 경로는 포함하지 않습니다.
+- 외부 요청·응답 DTO는 공개 API DTO와 JPA 엔티티에서 분리합니다.
+- 요청과 응답은 `application/json`을 사용합니다. MockAPI.io 응답에는 애플리케이션의
+  `CommonApiResponse<T>` 형식을 적용하지 않습니다.
+- 모든 전송 시도는 `POST /orders`를 수행하기 전에 `GET /orders?orderId={orderId}`를 호출합니다.
+- 조회 레코드 한 건의 `orderId`, `userId`, `menuId`, `paymentAmount`가 모두 일치해야 합니다.
+  레코드가 여러 건이거나 같은 `orderId`의 데이터가 다르면 외부 데이터 충돌입니다.
+- 예상한 `2xx` 상태와 유효하고 일치하는 JSON 본문이 모두 있을 때만 성공으로 처리합니다.
+- 연결 타임아웃, 읽기 타임아웃, 전송 오류, `2xx`가 아닌 응답, 잘못된 JSON, 외부 데이터 충돌은
+  애플리케이션 경계에서 재시도 가능한 전송 실패이며 주문을 `PENDING` 상태로 유지합니다.
+- HTTP 클라이언트는 `POST`를 자동 재시도하지 않습니다. 영속적인 재시도는 주문 전송 스케줄러가
+  조정하므로 반복 생성 전에 항상 조회합니다.
+- 기본 연결·읽기 타임아웃은 각각 `PT2S`, `PT5S`이며 `MOCKAPI_CONNECT_TIMEOUT`과
+  `MOCKAPI_READ_TIMEOUT`으로 변경할 수 있습니다.
+
+## 7. 로그와 코드 주석
 
 - 콘솔 로그 메시지는 한국어로 작성합니다.
 - 예기치 않은 실패에는 한국어 진단 메시지와 스택 트레이스를 포함합니다.
-- 로그에 자격 증명, 비밀 정보, 민감한 요청 데이터를 포함하지 않습니다.
+- 로그에 자격 증명, 비밀 정보, 민감한 요청 데이터 또는 설정된 MockAPI.io 프로젝트 Base URL을
+  포함하지 않습니다.
 - Java 문서와 코드 주석은 한국어로 작성합니다.

@@ -1,6 +1,7 @@
 package dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.service;
 
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.entity.CoffeeOrder;
+import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.entity.CollectionStatus;
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.repository.CoffeeOrderRepository;
 import dev.nbcsparta.assignment.nbccoffeeordersystem.infrastructure.collector.DataCollectionClient;
 import org.slf4j.Logger;
@@ -41,12 +42,10 @@ public class OrderCollectionDeliveryService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void deliver(long orderId) {
-        CoffeeOrder order = coffeeOrderRepository.findById(orderId).orElse(null);
+        CoffeeOrder order = coffeeOrderRepository.findByIdAndCollectionStatusForUpdate(
+                orderId, CollectionStatus.PENDING
+        ).orElse(null);
         if (order == null) {
-            log.warn("수집 전송 대상 주문을 찾을 수 없습니다. 주문={}", orderId);
-            return;
-        }
-        if (order.isCollectionDelivered()) {
             return;
         }
 
