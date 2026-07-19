@@ -4,6 +4,8 @@ import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.menu.entity.Menu;
 import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.user.entity.User;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -39,6 +41,10 @@ public class CoffeeOrder {
     @Column(name = "ordered_at", nullable = false)
     private Instant orderedAt;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "collection_status", nullable = false, length = 16)
+    private CollectionStatus collectionStatus;
+
     protected CoffeeOrder() {
     }
 
@@ -50,6 +56,7 @@ public class CoffeeOrder {
         this.menu = menu;
         this.paymentAmount = paymentAmount;
         this.orderedAt = orderedAt;
+        this.collectionStatus = CollectionStatus.PENDING;
     }
 
     public Long getId() {
@@ -70,5 +77,20 @@ public class CoffeeOrder {
 
     public Instant getOrderedAt() {
         return orderedAt;
+    }
+
+    public CollectionStatus getCollectionStatus() {
+        return collectionStatus;
+    }
+
+    public boolean isCollectionDelivered() {
+        return collectionStatus == CollectionStatus.SUCCEEDED;
+    }
+
+    /**
+     * 외부 수집 플랫폼이 주문 데이터를 정상적으로 수신했음을 기록한다.
+     */
+    public void markCollectionSucceeded() {
+        this.collectionStatus = CollectionStatus.SUCCEEDED;
     }
 }
