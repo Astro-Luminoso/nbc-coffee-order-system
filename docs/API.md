@@ -114,13 +114,20 @@ collection client:
 
 ```json
 {
+  "orderId": 1001,
   "userId": 1,
   "menuId": 2,
   "paymentAmount": 5000
 }
 ```
 
-An external delivery failure does not undo a committed payment.
+`orderId` is the external delivery idempotency identifier. The collection
+platform must ignore duplicate payloads with the same order ID.
+
+The order is created with a pending collection-delivery state in the same
+transaction as payment. The application attempts delivery after commit. An
+external delivery failure does not undo a committed payment; it records a
+pending state on the order and is retried by a shared scheduler.
 
 ## 6. List Popular Menus
 
@@ -175,5 +182,8 @@ MySQL aggregation before the response is returned.
 - A matching repeated order request returns its original response without
   creating another order.
 - A failed payment leaves the balance and order data unchanged.
+- A successful payment creates one order with a durable pending collection
+  delivery state. Delivery may be attempted more than once, but the receiver
+  deduplicates by `orderId`.
 - Popular-menu counts are cached in Redis and can be rebuilt from committed
   MySQL order data without changing the returned count.
