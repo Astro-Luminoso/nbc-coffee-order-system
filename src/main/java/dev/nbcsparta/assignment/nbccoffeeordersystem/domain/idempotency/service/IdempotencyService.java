@@ -11,7 +11,6 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
-import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -26,7 +25,6 @@ public class IdempotencyService {
 
     private final IdempotencyRecordRepository idempotencyRecordRepository;
     private final Duration pendingRetention;
-    private final Duration orderAttemptTtl;
     /**
      * 멱등성 레코드 저장소를 사용하는 서비스를 생성한다.
      *
@@ -35,43 +33,13 @@ public class IdempotencyService {
      */
     public IdempotencyService(
             IdempotencyRecordRepository idempotencyRecordRepository,
-            @Value("${idempotency.pending-retention:PT24H}") Duration pendingRetention,
-            @Value("${order-attempt.ttl:PT30M}") Duration orderAttemptTtl
+            @Value("${idempotency.pending-retention:PT24H}") Duration pendingRetention
     ) {
         this.idempotencyRecordRepository = idempotencyRecordRepository;
         if (pendingRetention.isZero() || pendingRetention.isNegative()) {
             throw new IllegalArgumentException("멱등성 대기 유지 시간은 양수여야 합니다.");
         }
-        if (orderAttemptTtl.isZero() || orderAttemptTtl.isNegative()) {
-            throw new IllegalArgumentException("주문 시도 유지 시간은 양수여야 합니다.");
-        }
         this.pendingRetention = pendingRetention;
-        this.orderAttemptTtl = orderAttemptTtl;
-    }
-
-    /**
-     * 서버가 발급한 식별자로 대기 상태 주문 시도를 저장한다.
-     *
-     * <p>이전 주문 시도 API 호환을 위해 주문 결제 도입 기간에만 유지한다.</p>
-     *
-     * @param userId 주문과 결제를 수행할 사용자 식별자
-     * @param menuId 주문할 메뉴 식별자
-     * @return 서버가 발급한 주문 시도 식별자와 만료 시각
-     */
-    @Transactional
-    public CreatedOrderAttempt createOrderAttempt(long userId, long menuId) {
-        String orderAttemptId = UUID.randomUUID().toString();
-        String canonicalRequest = canonicalOrderAttemptRequest(userId, menuId);
-        Instant now = Instant.now();
-        Instant expiresAt = now.plus(orderAttemptTtl);
-        idempotencyRecordRepository.save(new IdempotencyRecord(
-                new IdempotencyRecordId(IdempotencyOperation.ORDER_ATTEMPT, orderAttemptId),
-                canonicalRequest,
-                sha256(canonicalRequest),
-                now,
-                expiresAt
-        ));
-        return new CreatedOrderAttempt(orderAttemptId, expiresAt);
     }
 
     /**
@@ -237,10 +205,6 @@ public class IdempotencyService {
      * @return 정규 요청 JSON
      */
     private String canonicalOrderPaymentRequest(long userId, long menuId) {
-        return "{\"userId\":" + userId + ",\"menuId\":" + menuId + "}";
-    }
-
-    private String canonicalOrderAttemptRequest(long userId, long menuId) {
         return "{\"userId\":" + userId + ",\"menuId\":" + menuId + "}";
     }
 
