@@ -72,17 +72,26 @@ The service performs these steps:
 
 Owns collection-delivery attempts for completed orders. It sends a pending
 order's `orderId`, `userId`, `menuId`, and `paymentAmount` to the collection
-platform.
+platform. Each attempt starts a new database transaction and obtains the
+specific order only when it is still `PENDING`, using a pessimistic database
+lock. The lock serializes normal concurrent attempts from multiple application
+instances, so they do not make the same external call for one order at the
+same time.
 
 On success, it marks the order `SUCCEEDED`. On failure, it leaves the order
-`PENDING` so a later scheduled attempt can retry it. Delivery is at-least-once;
-the collection platform must deduplicate requests by `orderId`.
+`PENDING` so a later scheduled attempt can retry it. Delivery is still
+at-least-once: if the external platform accepts a request but the process or
+database transaction fails before the `SUCCEEDED` state commits, a later
+attempt can send the same order again. The collection platform must therefore
+deduplicate requests by `orderId`.
 
 ### `OrderCollectionRetryScheduler`
 
 Periodically finds `PENDING` orders and delegates delivery to
 `OrderCollectionDeliveryService`. It is safe to run on every application
-instance because duplicate external requests are deduplicated by `orderId`.
+instance: the delivery service rechecks and pessimistically locks each pending
+order before calling the external platform. Receiver-side deduplication by
+`orderId` remains required for at-least-once recovery.
 
 ### `PopularMenuService`
 
@@ -115,6 +124,9 @@ The database coordinates requests from all application instances.
 - A matching completed idempotency record replays the stored response.
 - A reused key with a different request hash is rejected.
 - A committed order is projected to one daily Redis ZSET member exactly once.
+- A collection-delivery attempt pessimistically locks the still-`PENDING`
+  order row before its external call, preventing normal concurrent instances
+  from delivering the same order simultaneously.
 
 Idempotency prevents repeated requests from duplicating a side effect. The
 atomic point update prevents different concurrent requests from losing updates
@@ -134,16 +146,21 @@ the payload to a configured Mock API or test double.
 ```text
 Order payment transaction commits
   -> OrderCompletedEvent
-  -> OrderCollectionDeliveryService sends the pending order
+  -> OrderCollectionDeliveryService locks the PENDING order
+  -> DataCollectionClient sends the locked order
   -> DataCollectionClient (orderId, userId, menuId, paymentAmount)
   -> Data collection platform
 
 Scheduled retry
   -> selects PENDING order
+  -> locks the still-PENDING order
   -> DataCollectionClient
   -> marks SUCCEEDED or leaves PENDING
 ```
 
 A failed external call never rolls back a committed payment. The order row
-retains its pending state for a later retry. Delivery is at-least-once, so the
-collection platform must deduplicate requests by `orderId`.
+retains its pending state for a later retry. The pessimistic lock prevents the
+ordinary concurrent-instance duplicate-call path, but it cannot make an
+external call and the database commit atomic. Delivery is therefore
+at-least-once, and the collection platform must deduplicate requests by
+`orderId`.
