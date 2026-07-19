@@ -14,7 +14,7 @@ import java.util.Objects;
 public class IdempotencyRecordId implements Serializable {
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "operation", nullable = false, length = 64)
+    @Column(name = "operation", nullable = false, length = 32)
     private IdempotencyOperation operation;
 
     @Column(name = "idempotency_key", nullable = false, length = 128)

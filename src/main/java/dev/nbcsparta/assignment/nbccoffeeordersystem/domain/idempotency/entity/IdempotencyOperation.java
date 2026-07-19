@@ -6,5 +6,6 @@ package dev.nbcsparta.assignment.nbccoffeeordersystem.domain.idempotency.entity;
 public enum IdempotencyOperation {
 
     POINT_CHARGE,
-    ORDER_ATTEMPT
+    ORDER_ATTEMPT,
+    ORDER_PAYMENT
 }
