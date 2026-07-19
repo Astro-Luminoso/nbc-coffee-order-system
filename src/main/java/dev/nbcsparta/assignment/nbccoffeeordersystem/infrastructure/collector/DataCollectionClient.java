@@ -5,5 +5,5 @@ package dev.nbcsparta.assignment.nbccoffeeordersystem.infrastructure.collector;
  */
 public interface DataCollectionClient {
 
-    void collect(long userId, long menuId, long paymentAmount);
+    void collect(long orderId, long userId, long menuId, long paymentAmount);
 }

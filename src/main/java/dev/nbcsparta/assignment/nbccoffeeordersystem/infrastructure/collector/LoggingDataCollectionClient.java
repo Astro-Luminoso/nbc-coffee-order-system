@@ -13,7 +13,7 @@ public class LoggingDataCollectionClient implements DataCollectionClient {
     private static final Logger log = LoggerFactory.getLogger(LoggingDataCollectionClient.class);
 
     @Override
-    public void collect(long userId, long menuId, long paymentAmount) {
-        log.info("주문 데이터 수집을 요청했습니다. 사용자={}, 메뉴={}, 결제금액={}", userId, menuId, paymentAmount);
+    public void collect(long orderId, long userId, long menuId, long paymentAmount) {
+        log.info("주문 데이터 수집을 요청했습니다. 주문={}, 사용자={}, 메뉴={}, 결제금액={}", orderId, userId, menuId, paymentAmount);
     }
 }

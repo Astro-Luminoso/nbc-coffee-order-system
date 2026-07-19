@@ -1,8 +1,6 @@
 package dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.event;
 
-import dev.nbcsparta.assignment.nbccoffeeordersystem.infrastructure.collector.DataCollectionClient;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import dev.nbcsparta.assignment.nbccoffeeordersystem.domain.order.service.OrderCollectionDeliveryService;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -13,19 +11,14 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @Component
 public class OrderCompletedEventListener {
 
-    private static final Logger log = LoggerFactory.getLogger(OrderCompletedEventListener.class);
-    private final DataCollectionClient dataCollectionClient;
+    private final OrderCollectionDeliveryService orderCollectionDeliveryService;
 
-    public OrderCompletedEventListener(DataCollectionClient dataCollectionClient) {
-        this.dataCollectionClient = dataCollectionClient;
+    public OrderCompletedEventListener(OrderCollectionDeliveryService orderCollectionDeliveryService) {
+        this.orderCollectionDeliveryService = orderCollectionDeliveryService;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void collect(OrderCompletedEvent event) {
-        try {
-            dataCollectionClient.collect(event.userId(), event.menuId(), event.paymentAmount());
-        } catch (RuntimeException exception) {
-            log.error("커밋된 주문 데이터 수집 전송에 실패했습니다. 주문={}", event.orderId(), exception);
-        }
+        orderCollectionDeliveryService.deliver(event.orderId());
     }
 }
