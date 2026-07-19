@@ -71,16 +71,21 @@ dev.nbcsparta.assignment.nbccoffeeordersystem
 ### `OrderCollectionDeliveryService`
 
 완료 주문의 수집 플랫폼 전송 시도를 담당합니다. 대기 주문의 `orderId`, `userId`, `menuId`,
-`paymentAmount`를 수집 플랫폼에 전송합니다.
+`paymentAmount`를 수집 플랫폼에 전송합니다. 각 시도는 새 DB 트랜잭션에서 아직 `PENDING`인
+특정 주문만 DB 비관적 잠금으로 조회합니다. 이 잠금은 여러 애플리케이션 인스턴스의 정상적인
+동시 시도를 직렬화하므로, 같은 주문에 대해 동시에 외부 호출하지 않습니다.
 
 성공하면 주문을 `SUCCEEDED`로 표시합니다. 실패하면 `PENDING`으로 두어 나중에 스케줄러가
-재시도합니다. 전달은 at-least-once 방식이므로 수집 플랫폼은 `orderId`로 요청을 중복 제거해야
-합니다.
+재시도합니다. 외부 플랫폼이 요청을 받았지만 `SUCCEEDED` 커밋 전에 프로세스나 DB 트랜잭션이
+실패할 수 있으므로 전달은 여전히 at-least-once 방식입니다. 수집 플랫폼은 `orderId`로 요청을
+중복 제거해야 합니다.
 
 ### `OrderCollectionRetryScheduler`
 
 주기적으로 `PENDING` 주문을 찾아 `OrderCollectionDeliveryService`에 전달합니다. 외부 요청의
-중복은 `orderId`로 제거되므로 모든 애플리케이션 인스턴스에서 실행해도 안전합니다.
+중복은 전달 서비스가 각 대기 주문을 다시 확인하고 비관적 잠금을 획득해 막습니다. at-least-once
+복구를 위해 수신 측의 `orderId` 중복 제거는 여전히 필요하므로 모든 애플리케이션 인스턴스에서
+실행해도 안전합니다.
 
 ### `PopularMenuService`
 
@@ -107,6 +112,8 @@ DB는 모든 애플리케이션 인스턴스의 요청을 조정합니다.
 - 완료된 동일 멱등성 기록은 저장된 응답을 재생합니다.
 - 같은 키를 다른 요청 해시에 사용하면 거부합니다.
 - 커밋된 주문은 일별 Redis ZSET 멤버에 한 번만 projection됩니다.
+- 수집 전송 시도는 외부 호출 전에 아직 `PENDING`인 주문 행을 비관적으로 잠가, 정상적인 여러
+  인스턴스가 같은 주문을 동시에 전송하지 못하게 합니다.
 
 멱등성은 하나의 요청이 반복되어 부작용이 중복되는 것을 막습니다. 원자적 포인트 갱신은 서로
 다른 동시 요청으로 인한 갱신 유실과 초과 결제를 막습니다. 두 방식 모두 필요합니다.
@@ -124,15 +131,19 @@ MySQL 주문을 집계해 Redis projection을 복원합니다.
 ```text
 주문 결제 트랜잭션 커밋
   -> OrderCompletedEvent
-  -> OrderCollectionDeliveryService가 대기 주문 전송
+  -> OrderCollectionDeliveryService가 PENDING 주문 잠금
+  -> DataCollectionClient가 잠긴 주문 전송
   -> DataCollectionClient (orderId, userId, menuId, paymentAmount)
   -> 데이터 수집 플랫폼
 
 스케줄러 재시도
   -> PENDING 주문 선택
+  -> 아직 PENDING인 주문 잠금
   -> DataCollectionClient
   -> SUCCEEDED로 표시하거나 PENDING 유지
 ```
 
 외부 호출 실패는 커밋된 결제를 되돌리지 않습니다. 주문 행은 이후 재시도를 위해 대기 상태를
-유지합니다. 전달은 at-least-once 방식이므로 수집 플랫폼은 주문 ID로 중복을 제거해야 합니다.
+유지합니다. 비관적 잠금은 일반적인 인스턴스 경합의 중복 호출을 막지만 외부 호출과 DB 커밋을
+원자화할 수는 없습니다. 따라서 전달은 at-least-once 방식이며 수집 플랫폼은 주문 ID로 중복을
+제거해야 합니다.
