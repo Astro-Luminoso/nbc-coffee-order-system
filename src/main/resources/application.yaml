@@ -1,8 +1,6 @@
 spring:
   application:
     name: nbc-coffee-order-system
-  profiles:
-    active: local
   datasource:
     url: ${MYSQL_DB_URL}
     username: ${MYSQL_DB_USERNAME}
