@@ -1,0 +1,298 @@
+{
+  "info": {
+    "_postman_id": "c0d96e4a-3468-48e2-b53f-60f5b7b04f84",
+    "name": "NBC Coffee Order System - Local Manual Test",
+    "description": "Import this collection into Postman and run requests in numeric order. Start the application with the local profile first. The local seed creates menus and users with IDs 1 through 5; the default userId is 1.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "userId",
+      "value": "1"
+    },
+    {
+      "key": "menuId",
+      "value": "1"
+    },
+    {
+      "key": "chargeAmount",
+      "value": "10000"
+    },
+    {
+      "key": "pointChargeKey",
+      "value": ""
+    },
+    {
+      "key": "orderPaymentKey",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "01. Initialize session and list menus",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "pm.collectionVariables.set('pointChargeKey', pm.variables.replaceIn('{{$guid}}'));",
+              "pm.collectionVariables.set('orderPaymentKey', pm.variables.replaceIn('{{$guid}}'));"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Returns HTTP 200', function () { pm.response.to.have.status(200); });",
+              "const body = pm.response.json();",
+              "pm.test('Returns a non-empty menu list', function () { pm.expect(body.data.menus).to.be.an('array').that.is.not.empty; });",
+              "pm.test('Each menu contains id, name, and price', function () { body.data.menus.forEach(menu => { pm.expect(menu).to.have.all.keys('id', 'name', 'price'); }); });",
+              "pm.collectionVariables.set('menuId', String(body.data.menus[0].id));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/menus"
+      }
+    },
+    {
+      "name": "02. Charge points",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Returns HTTP 200', function () { pm.response.to.have.status(200); });",
+              "const body = pm.response.json();",
+              "pm.test('Returns the charged user and updated balance', function () { pm.expect(body.data.userId).to.eql(Number(pm.collectionVariables.get('userId'))); pm.expect(body.data.chargedAmount).to.eql(Number(pm.collectionVariables.get('chargeAmount'))); pm.expect(body.data.balance).to.be.above(0); });",
+              "pm.collectionVariables.set('chargedBalance', String(body.data.balance));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{pointChargeKey}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": {{chargeAmount}}\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/api/v1/users/{{userId}}/point-charges"
+      }
+    },
+    {
+      "name": "03. Replay point charge with the same idempotency key",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Returns HTTP 200', function () { pm.response.to.have.status(200); });",
+              "const body = pm.response.json();",
+              "pm.test('Replays the original balance without charging twice', function () { pm.expect(body.data.balance).to.eql(Number(pm.collectionVariables.get('chargedBalance'))); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{pointChargeKey}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": {{chargeAmount}}\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/api/v1/users/{{userId}}/point-charges"
+      }
+    },
+    {
+      "name": "04. Reject point-charge key reuse with a different request",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Returns HTTP 409', function () { pm.response.to.have.status(409); });",
+              "pm.test('Returns IDEMPOTENCY_KEY_REUSED', function () { pm.expect(pm.response.json().data.code).to.eql('IDEMPOTENCY_KEY_REUSED'); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{pointChargeKey}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": 10001\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/api/v1/users/{{userId}}/point-charges"
+      }
+    },
+    {
+      "name": "05. Order and pay with points",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Returns HTTP 201', function () { pm.response.to.have.status(201); });",
+              "const body = pm.response.json();",
+              "pm.test('Returns a paid order', function () { pm.expect(body.data.orderId).to.be.a('number'); pm.expect(body.data.userId).to.eql(Number(pm.collectionVariables.get('userId'))); pm.expect(body.data.menu.id).to.eql(Number(pm.collectionVariables.get('menuId'))); pm.expect(body.data.paymentAmount).to.be.above(0); });",
+              "pm.collectionVariables.set('orderId', String(body.data.orderId));",
+              "pm.collectionVariables.set('remainingBalance', String(body.data.remainingBalance));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{orderPaymentKey}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"menuId\": {{menuId}}\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/api/v1/orders"
+      }
+    },
+    {
+      "name": "06. Replay order payment with the same idempotency key",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Returns HTTP 201', function () { pm.response.to.have.status(201); });",
+              "const body = pm.response.json();",
+              "pm.test('Replays the original order and balance', function () { pm.expect(body.data.orderId).to.eql(Number(pm.collectionVariables.get('orderId'))); pm.expect(body.data.remainingBalance).to.eql(Number(pm.collectionVariables.get('remainingBalance'))); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{orderPaymentKey}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{userId}},\n  \"menuId\": {{menuId}}\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/api/v1/orders"
+      }
+    },
+    {
+      "name": "07. List popular menus",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Returns HTTP 200', function () { pm.response.to.have.status(200); });",
+              "const body = pm.response.json();",
+              "pm.test('Returns at most three menus', function () { pm.expect(body.data.menus).to.be.an('array').with.lengthOf.at.most(3); });",
+              "pm.test('Returns menus in ranking order', function () { const menus = body.data.menus; for (let index = 1; index < menus.length; index += 1) { const previous = menus[index - 1]; const current = menus[index]; pm.expect(previous.orderCount > current.orderCount || (previous.orderCount === current.orderCount && previous.menuId < current.menuId)).to.eql(true); } });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/menus/popular"
+      }
+    }
+  ]
+}
